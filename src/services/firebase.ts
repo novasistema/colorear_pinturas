@@ -1,0 +1,667 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDocFromServer,
+  collection,
+  getDocs,
+  setDoc,
+  writeBatch
+} from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
+import { generateColorearProducts } from './colorearPriceListData';
+import { 
+  RawMaterial, 
+  Formula, 
+  Product, 
+  Customer, 
+  Transport, 
+  Supplier, 
+  CompanyConfig, 
+  ProductionOrder, 
+  SalesOrder, 
+  NotificationItem, 
+  FinancialTransaction,
+  InventoryMovement 
+} from '../types';
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+export async function testConnection(): Promise<boolean> {
+  try {
+    if (!auth.currentUser) {
+      await signInAnonymously(auth).catch((authErr) => {
+        console.warn("Anonymous sign-in note:", authErr);
+      });
+    }
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn("Firebase client is offline or starting up.");
+    }
+    return false;
+  }
+}
+
+// Seed realistic starter data for Colorear Pinturas
+export async function seedInitialDataIfEmpty() {
+  try {
+    const rawMaterialsSnap = await getDocs(collection(db, 'raw_materials'));
+    if (!rawMaterialsSnap.empty) {
+      return; // Already seeded
+    }
+
+    const batch = writeBatch(db);
+
+    // Initial Raw Materials
+    const initialRawMaterials: RawMaterial[] = [
+      { id: 'rm-1', code: 'MP-RES-01', name: 'Resina Acrílica Estirenada (50% Sólidos)', category: 'resina', unit: 'kg', currentStock: 3450, minStock: 800, unitCost: 3100, supplierName: 'Química del Plata S.A.', updatedAt: new Date().toISOString() },
+      { id: 'rm-2', code: 'MP-PIG-01', name: 'Dióxido de Titanio R-902 (Blanco puro)', category: 'pigmento', unit: 'kg', currentStock: 1820, minStock: 500, unitCost: 5400, supplierName: 'Pigmentos Industriales', updatedAt: new Date().toISOString() },
+      { id: 'rm-3', code: 'MP-CAR-01', name: 'Carbonato de Calcio Micronizado (Malla 400)', category: 'carga', unit: 'kg', currentStock: 8500, minStock: 2000, unitCost: 450, supplierName: 'Minerales Cordillera', updatedAt: new Date().toISOString() },
+      { id: 'rm-4', code: 'MP-CAR-02', name: 'Caolín Calcinado Superblanco', category: 'carga', unit: 'kg', currentStock: 4200, minStock: 1000, unitCost: 820, supplierName: 'Minerales Cordillera', updatedAt: new Date().toISOString() },
+      { id: 'rm-5', code: 'MP-ADI-01', name: 'Dispersante Policarboxilato Sódico', category: 'aditivo', unit: 'kg', currentStock: 480, minStock: 150, unitCost: 4800, supplierName: 'Aditivos Especiales', updatedAt: new Date().toISOString() },
+      { id: 'rm-6', code: 'MP-ADI-02', name: 'Antiespumante Mineral Base Silicón', category: 'aditivo', unit: 'kg', currentStock: 240, minStock: 80, unitCost: 7200, supplierName: 'Aditivos Especiales', updatedAt: new Date().toISOString() },
+      { id: 'rm-7', code: 'MP-ADI-03', name: 'Espesante Celulósico HEC (Alta viscosidad)', category: 'aditivo', unit: 'kg', currentStock: 310, minStock: 100, unitCost: 8900, supplierName: 'Aditivos Especiales', updatedAt: new Date().toISOString() },
+      { id: 'rm-8', code: 'MP-ADI-04', name: 'Biocida Isotiazolinona (In-can)', category: 'aditivo', unit: 'kg', currentStock: 190, minStock: 60, unitCost: 6500, supplierName: 'Química del Plata S.A.', updatedAt: new Date().toISOString() },
+      { id: 'rm-9', code: 'MP-ENV-20', name: 'Balde Plástico 20 Litros Blanco C/Manija y Tapa', category: 'envase', unit: 'unidad', currentStock: 1250, minStock: 300, unitCost: 3800, supplierName: 'Envases Plásticos del Sol', updatedAt: new Date().toISOString() },
+      { id: 'rm-10', code: 'MP-ENV-10', name: 'Balde Plástico 10 Litros C/Manija y Tapa', category: 'envase', unit: 'unidad', currentStock: 850, minStock: 200, unitCost: 2400, supplierName: 'Envases Plásticos del Sol', updatedAt: new Date().toISOString() },
+      { id: 'rm-11', code: 'MP-ENV-04', name: 'Lata Hojalata 4 Litros Litografiada Colorear', category: 'envase', unit: 'unidad', currentStock: 1400, minStock: 400, unitCost: 1950, supplierName: 'Metalgráfica Centro', updatedAt: new Date().toISOString() },
+      { id: 'rm-12', code: 'MP-ENV-01', name: 'Lata Hojalata 1 Litro Litografiada Colorear', category: 'envase', unit: 'unidad', currentStock: 2100, minStock: 500, unitCost: 1100, supplierName: 'Metalgráfica Centro', updatedAt: new Date().toISOString() },
+      { id: 'rm-13', code: 'MP-SOL-01', name: 'Aguarrás Mineral Desodorizado', category: 'solvente', unit: 'litro', currentStock: 2900, minStock: 600, unitCost: 2100, supplierName: 'Solventes Petroquímica', updatedAt: new Date().toISOString() }
+    ];
+
+    initialRawMaterials.forEach(rm => {
+      batch.set(doc(db, 'raw_materials', rm.id), rm);
+    });
+
+    // Master Formulas (Base 100 kg)
+    const initialFormulas: Formula[] = [
+      {
+        id: 'form-latex-int',
+        code: 'FOR-LAT-01',
+        name: 'Látex Interior Lavable Mate Premium (Base 100 kg)',
+        paintType: 'Látex Interior',
+        density: 1.38,
+        theoreticalCostPerKg: 1845.5,
+        baseQuantity: 100,
+        notes: 'Fórmula balanceada con excelente poder cubritivo y lavabilidad. Molienda en dispersor rápido a 1800 rpm.',
+        createdAt: new Date().toISOString(),
+        items: [
+          { rawMaterialId: 'rm-1', rawMaterialName: 'Resina Acrílica Estirenada (50% Sólidos)', percentageOrKg: 22, unit: 'kg' },
+          { rawMaterialId: 'rm-2', rawMaterialName: 'Dióxido de Titanio R-902 (Blanco puro)', percentageOrKg: 14, unit: 'kg' },
+          { rawMaterialId: 'rm-3', rawMaterialName: 'Carbonato de Calcio Micronizado (Malla 400)', percentageOrKg: 28, unit: 'kg' },
+          { rawMaterialId: 'rm-4', rawMaterialName: 'Caolín Calcinado Superblanco', percentageOrKg: 6, unit: 'kg' },
+          { rawMaterialId: 'rm-5', rawMaterialName: 'Dispersante Policarboxilato Sódico', percentageOrKg: 0.8, unit: 'kg' },
+          { rawMaterialId: 'rm-6', rawMaterialName: 'Antiespumante Mineral Base Silicón', percentageOrKg: 0.4, unit: 'kg' },
+          { rawMaterialId: 'rm-7', rawMaterialName: 'Espesante Celulósico HEC (Alta viscosidad)', percentageOrKg: 0.6, unit: 'kg' },
+          { rawMaterialId: 'rm-8', rawMaterialName: 'Biocida Isotiazolinona (In-can)', percentageOrKg: 0.2, unit: 'kg' }
+        ]
+      },
+      {
+        id: 'form-latex-ext',
+        code: 'FOR-LAT-02',
+        name: 'Impermeabilizante Frentes y Muros Exterior (Base 100 kg)',
+        paintType: 'Impermeabilizante Exterior',
+        density: 1.34,
+        theoreticalCostPerKg: 2190.0,
+        baseQuantity: 100,
+        notes: 'Película elástica hidro-repelente con filtro UV y aditivo anti-hongos reforzado.',
+        createdAt: new Date().toISOString(),
+        items: [
+          { rawMaterialId: 'rm-1', rawMaterialName: 'Resina Acrílica Estirenada (50% Sólidos)', percentageOrKg: 32, unit: 'kg' },
+          { rawMaterialId: 'rm-2', rawMaterialName: 'Dióxido de Titanio R-902 (Blanco puro)', percentageOrKg: 16, unit: 'kg' },
+          { rawMaterialId: 'rm-3', rawMaterialName: 'Carbonato de Calcio Micronizado (Malla 400)', percentageOrKg: 22, unit: 'kg' },
+          { rawMaterialId: 'rm-5', rawMaterialName: 'Dispersante Policarboxilato Sódico', percentageOrKg: 0.9, unit: 'kg' },
+          { rawMaterialId: 'rm-6', rawMaterialName: 'Antiespumante Mineral Base Silicón', percentageOrKg: 0.5, unit: 'kg' },
+          { rawMaterialId: 'rm-7', rawMaterialName: 'Espesante Celulósico HEC (Alta viscosidad)', percentageOrKg: 0.7, unit: 'kg' },
+          { rawMaterialId: 'rm-8', rawMaterialName: 'Biocida Isotiazolinona (In-can)', percentageOrKg: 0.3, unit: 'kg' }
+        ]
+      },
+      {
+        id: 'form-membrana',
+        code: 'FOR-MEM-01',
+        name: 'Membrana en Pasta Poliuretánica Fibrada (Base 100 kg)',
+        paintType: 'Membrana Líquida',
+        density: 1.30,
+        theoreticalCostPerKg: 2420.0,
+        baseQuantity: 100,
+        notes: 'Para techos y terrazas transitables con microfibras incorporadas.',
+        createdAt: new Date().toISOString(),
+        items: [
+          { rawMaterialId: 'rm-1', rawMaterialName: 'Resina Acrílica Estirenada (50% Sólidos)', percentageOrKg: 38, unit: 'kg' },
+          { rawMaterialId: 'rm-2', rawMaterialName: 'Dióxido de Titanio R-902 (Blanco puro)', percentageOrKg: 10, unit: 'kg' },
+          { rawMaterialId: 'rm-3', rawMaterialName: 'Carbonato de Calcio Micronizado (Malla 400)', percentageOrKg: 25, unit: 'kg' },
+          { rawMaterialId: 'rm-5', rawMaterialName: 'Dispersante Policarboxilato Sódico', percentageOrKg: 0.7, unit: 'kg' },
+          { rawMaterialId: 'rm-6', rawMaterialName: 'Antiespumante Mineral Base Silicón', percentageOrKg: 0.6, unit: 'kg' },
+          { rawMaterialId: 'rm-7', rawMaterialName: 'Espesante Celulósico HEC (Alta viscosidad)', percentageOrKg: 0.9, unit: 'kg' }
+        ]
+      }
+    ];
+
+    initialFormulas.forEach(f => {
+      batch.set(doc(db, 'formulas', f.id), f);
+    });
+
+    // Finished Products Catalog: Official Colorear Pinturas Agosto 2026 list with 2-letter + 4-digit SKU codes
+    const initialProducts = generateColorearProducts();
+
+    initialProducts.forEach(p => {
+      batch.set(doc(db, 'products', p.id), p);
+    });
+
+    // Transports / Logistics Carriers
+    const initialTransports: Transport[] = [
+      { id: 'trans-1', name: 'Expreso Cruz del Sur', contactName: 'Mariano Varela', phone: '+54 11 4987-6543', serviceArea: 'Buenos Aires, CABA, Patagonia, Cuyo', vehicleType: 'Semirremolques térmicos y paqueteros', capacityKg: 28000, address: 'Av. Amancio Alcorta 3100, CABA', active: true },
+      { id: 'trans-2', name: 'Transportes La Sevillanita', contactName: 'Gustavo Benítez', phone: '+54 381 452-9800', serviceArea: 'Tucumán, Salta, Jujuy, Santiago del Estero, Córdoba', vehicleType: 'Tractor con acoplado sider', capacityKg: 26000, address: 'Ruta 9 Km 1290, Tucumán', active: true },
+      { id: 'trans-3', name: 'Camión Fábrica Colorear #1 (Mercedes Benz Atego)', contactName: 'Roberto Gómez (Chofer planta)', phone: '+54 11 5566-7788', serviceArea: 'Gran Buenos Aires, Rosario, La Plata (Entregas directas)', vehicleType: 'Chasis playo con barandas fijas', capacityKg: 9500, address: 'Base Planta Industrial Colorear', active: true },
+      { id: 'trans-4', name: 'Logística Andreani Distribución', contactName: 'Centro Operativo Express', phone: '+54 11 4890-2000', serviceArea: 'Cobertura nacional puerta a puerta', vehicleType: 'Furgones y utilitarios medianos', capacityKg: 3500, address: 'Polo Industrial Norlog, Tigre', active: true }
+    ];
+
+    initialTransports.forEach(t => {
+      batch.set(doc(db, 'transports', t.id), t);
+    });
+
+    // Customers (with DNI/CUIT for Portal Access)
+    const initialCustomers: Customer[] = [
+      {
+        id: 'cust-1',
+        taxId: '30-71234567-9',
+        businessName: 'Pinturerías del Centro S.R.L.',
+        tradeName: 'Pinturerías Centro (3 Sucursales)',
+        taxCategory: 'responsable_inscripto',
+        email: 'compras@pintureriascentro.com.ar',
+        phone: '+54 11 4321-7890',
+        address: 'Av. Corrientes 4520',
+        city: 'CABA',
+        province: 'Buenos Aires',
+        transportId: 'trans-3',
+        transportName: 'Camión Fábrica Colorear #1 (Mercedes Benz Atego)',
+        priceList: 'distribuidor',
+        creditLimit: 3500000,
+        currentBalance: 785000, // Owes 785.000
+        status: 'activo'
+      },
+      {
+        id: 'cust-2',
+        taxId: '30-68912345-4',
+        businessName: 'Ferretería Industrial Norte S.A.',
+        tradeName: 'Ferretería del Norte',
+        taxCategory: 'responsable_inscripto',
+        email: 'administracion@ferreterianorte.com.ar',
+        phone: '+54 341 489-1122',
+        address: 'Bv. Oroño 2850',
+        city: 'Rosario',
+        province: 'Santa Fe',
+        transportId: 'trans-1',
+        transportName: 'Expreso Cruz del Sur',
+        priceList: 'mayorista',
+        creditLimit: 2000000,
+        currentBalance: 340000,
+        status: 'activo'
+      },
+      {
+        id: 'cust-3',
+        taxId: '20-28945612-8',
+        businessName: 'Carlos Alberto Rodríguez (Pintor & Contratista)',
+        tradeName: 'Rodríguez Obras & Revestimientos',
+        taxCategory: 'monotributo',
+        email: 'carlosrodriguezpinturas@gmail.com',
+        phone: '+54 11 6789-0123',
+        address: 'Calle Mitre 845',
+        city: 'San Martín',
+        province: 'Buenos Aires',
+        transportId: 'trans-3',
+        transportName: 'Camión Fábrica Colorear #1 (Mercedes Benz Atego)',
+        priceList: 'minorista',
+        creditLimit: 500000,
+        currentBalance: 0,
+        status: 'activo'
+      },
+      {
+        id: 'cust-4',
+        taxId: '33-54321987-9',
+        businessName: 'Constructora del Sur S.A.',
+        tradeName: 'Edificios del Plata',
+        taxCategory: 'responsable_inscripto',
+        email: 'obras@constructoradelsur.com.ar',
+        phone: '+54 223 456-7890',
+        address: 'Av. Colón 1920',
+        city: 'Mar del Plata',
+        province: 'Buenos Aires',
+        transportId: 'trans-1',
+        transportName: 'Expreso Cruz del Sur',
+        priceList: 'distribuidor',
+        creditLimit: 5000000,
+        currentBalance: 1250000,
+        status: 'activo'
+      }
+    ];
+
+    initialCustomers.forEach(c => {
+      batch.set(doc(db, 'customers', c.id), c);
+    });
+
+    // Suppliers
+    const initialSuppliers: Supplier[] = [
+      { id: 'sup-1', businessName: 'Química del Plata S.A.', taxId: '30-55112233-4', email: 'ventas@quimicadelplata.com.ar', phone: '+54 11 4755-1234', category: 'Resinas sintéticas y solventes', paymentTerms: '30 días F.F.' },
+      { id: 'sup-2', businessName: 'Pigmentos Industriales S.R.L.', taxId: '30-66223344-5', email: 'contacto@pigmentosind.com.ar', phone: '+54 11 4200-9876', category: 'Dióxidos y óxidos de hierro', paymentTerms: 'Cheques 30/60' },
+      { id: 'sup-3', businessName: 'Minerales Cordillera', taxId: '30-77334455-6', email: 'pedidos@mineralescordillera.com.ar', phone: '+54 264 423-4567', category: 'Carbonatos, caolines y talcos', paymentTerms: 'Transferencia 15 días' },
+      { id: 'sup-4', businessName: 'Envases Plásticos del Sol', taxId: '30-88445566-7', email: 'ventas@envasesdelsol.com.ar', phone: '+54 11 4455-6677', category: 'Baldes plásticos 10L y 20L', paymentTerms: 'Contra entrega' }
+    ];
+
+    initialSuppliers.forEach(s => {
+      batch.set(doc(db, 'suppliers', s.id), s);
+    });
+
+    // Active Production Order
+    const initialProductionOrders: ProductionOrder[] = [
+      {
+        id: 'po-1',
+        orderNumber: 'OP-2026-0042',
+        formulaId: 'form-latex-int',
+        productName: 'Látex Interior Colorear Mate Blanco',
+        batchNumber: 'LOTE-2603-A',
+        targetKg: 1000,
+        packagingType: 'balde_20l',
+        packageCount: 36, // ~27.6 kg per 20L bucket with density 1.38
+        status: 'en_proceso',
+        materialCost: 1845500,
+        operatorName: 'Martín Ibarra (Jefe Planta)',
+        notes: 'Molienda fina comprobada en Hegman grado 6. Listo para pase a tanque de agitación y ajuste de viscosidad.',
+        createdAt: new Date(Date.now() - 3600000 * 5).toISOString()
+      },
+      {
+        id: 'po-2',
+        orderNumber: 'OP-2026-0041',
+        formulaId: 'form-latex-ext',
+        productName: 'Impermeabilizante Frentes Colorear Máxima Protección',
+        batchNumber: 'LOTE-2602-C',
+        targetKg: 2000,
+        packagingType: 'balde_20l',
+        packageCount: 74,
+        status: 'completada',
+        materialCost: 4380000,
+        operatorName: 'Carlos Vega',
+        notes: 'Producción finalizada exitosamente. Control de calidad aprobado (Viscosidad Krebs 102 KU).',
+        createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+        completedAt: new Date(Date.now() - 86400000 * 1).toISOString()
+      }
+    ];
+
+    initialProductionOrders.forEach(po => {
+      batch.set(doc(db, 'production_orders', po.id), po);
+    });
+
+    // Sample Sales Orders (spanning the order lifecycle: Remito, Preparado, Facturación ARCA/no-ARCA, Despacho)
+    const initialSalesOrders: SalesOrder[] = [
+      {
+        id: 'order-101',
+        orderNumber: 'PED-2026-089',
+        customerId: 'cust-1',
+        customerName: 'Pinturerías del Centro S.R.L.',
+        customerTaxId: '30-71234567-9',
+        customerPhone: '+54 11 4321-7890',
+        customerEmail: 'compras@pintureriascentro.com.ar',
+        customerAddress: 'Av. Corrientes 4520, CABA',
+        billingType: 'arca',
+        invoiceType: 'FACTURA_A',
+        date: new Date(Date.now() - 86400000 * 1).toISOString(),
+        status: 'despachado',
+        paymentStatus: 'pendiente',
+        transportId: 'trans-3',
+        transportName: 'Camión Fábrica Colorear #1 (Mercedes Benz Atego)',
+        trackingCode: 'TRK-COL-2026-789',
+        remitoNumber: 'REM-R0001-00001842',
+        remitoDate: new Date(Date.now() - 86400000 * 1).toISOString(),
+        invoiceNumber: 'FAC-A-0004-00000912',
+        cae: '74128956321458',
+        caeVto: '2026-10-30',
+        items: [
+          { productId: 'prod-1', productName: 'Látex Interior Colorear Mate Blanco 20L', code: 'COL-LAT-20', presentation: '20 Litros', quantity: 15, unitPrice: 42500, discount: 0, subtotal: 637500 },
+          { productId: 'prod-4', productName: 'Impermeabilizante Frentes Colorear 20L', code: 'COL-EXT-20', presentation: '20 Litros', quantity: 10, unitPrice: 51800, discount: 0, subtotal: 518000 }
+        ],
+        subtotal: 1155500,
+        taxAmount: 242655, // 21% IVA
+        total: 1398155,
+        paidAmount: 613155,
+        notes: 'Entrega en depósito central antes de las 14:00 hs.'
+      },
+      {
+        id: 'order-102',
+        orderNumber: 'PED-2026-090',
+        customerId: 'cust-2',
+        customerName: 'Ferretería Industrial Norte S.A.',
+        customerTaxId: '30-68912345-4',
+        customerPhone: '+54 341 489-1122',
+        customerEmail: 'administracion@ferreterianorte.com.ar',
+        customerAddress: 'Bv. Oroño 2850, Rosario, Santa Fe',
+        billingType: 'arca',
+        invoiceType: 'FACTURA_A',
+        date: new Date().toISOString(),
+        status: 'preparando_remito',
+        paymentStatus: 'pendiente',
+        transportId: 'trans-1',
+        transportName: 'Expreso Cruz del Sur',
+        trackingCode: 'TRK-CDS-992144',
+        remitoNumber: 'REM-R0001-00001843',
+        remitoDate: new Date().toISOString(),
+        items: [
+          { productId: 'prod-7', productName: 'Esmalte Sintético 3 en 1 Colorear 4L', code: 'COL-ESM-04', presentation: '4 Litros', quantity: 20, unitPrice: 22800, discount: 5, subtotal: 433200 },
+          { productId: 'prod-6', productName: 'Membrana en Pasta Fibrada Colorear 20L', code: 'COL-MEM-20', presentation: '20 Litros', quantity: 6, unitPrice: 64900, discount: 0, subtotal: 389400 }
+        ],
+        subtotal: 822600,
+        taxAmount: 172746,
+        total: 995346,
+        paidAmount: 0,
+        notes: 'Cargar paletizado y flejado para expreso.'
+      },
+      {
+        id: 'order-103',
+        orderNumber: 'PED-2026-091',
+        customerId: 'cust-3',
+        customerName: 'Carlos Alberto Rodríguez (Pintor & Contratista)',
+        customerTaxId: '20-28945612-8',
+        customerPhone: '+54 11 6789-0123',
+        customerEmail: 'carlosrodriguezpinturas@gmail.com',
+        customerAddress: 'Calle Mitre 845, San Martín',
+        billingType: 'no_arca', // Venta interna no fiscal
+        invoiceType: 'RECIBO_X_NO_ARCA',
+        date: new Date().toISOString(),
+        status: 'ingresado',
+        paymentStatus: 'pagado',
+        transportId: 'trans-3',
+        transportName: 'Camión Fábrica Colorear #1',
+        trackingCode: 'TRK-COL-2026-791',
+        items: [
+          { productId: 'prod-1', productName: 'Látex Interior Colorear Mate Blanco 20L', code: 'COL-LAT-20', presentation: '20 Litros', quantity: 4, unitPrice: 69800, discount: 10, subtotal: 251280 }
+        ],
+        subtotal: 251280,
+        taxAmount: 0,
+        total: 251280,
+        paidAmount: 251280,
+        notes: 'Abona por transferencia bancaria anticipada. Retira personal de obra.'
+      }
+    ];
+
+    initialSalesOrders.forEach(so => {
+      batch.set(doc(db, 'sales_orders', so.id), so);
+    });
+
+    // Initial Inventory Movements (Kardex)
+    const initialMovements: InventoryMovement[] = [
+      {
+        id: 'mov-1',
+        itemType: 'raw_material',
+        itemId: 'rm-1',
+        itemName: 'Resina Acrílica Estirenada (50% Sólidos)',
+        movementType: 'entrada_compra',
+        quantity: 2000,
+        unit: 'kg',
+        reference: 'RECEP-OC-2026-015',
+        user: 'Administración Compras',
+        date: new Date(Date.now() - 86400000 * 3).toISOString()
+      },
+      {
+        id: 'mov-2',
+        itemType: 'raw_material',
+        itemId: 'rm-1',
+        itemName: 'Resina Acrílica Estirenada (50% Sólidos)',
+        movementType: 'salida_produccion',
+        quantity: -640,
+        unit: 'kg',
+        reference: 'OP-2026-0041',
+        user: 'Operador Planta',
+        date: new Date(Date.now() - 86400000 * 2).toISOString()
+      },
+      {
+        id: 'mov-3',
+        itemType: 'product',
+        itemId: 'prod-4',
+        itemName: 'Impermeabilizante Frentes Colorear Máxima Protección 20L',
+        movementType: 'entrada_produccion',
+        quantity: 74,
+        unit: 'baldes',
+        reference: 'OP-2026-0041',
+        user: 'Jefe Planta',
+        date: new Date(Date.now() - 86400000 * 1).toISOString()
+      }
+    ];
+
+    initialMovements.forEach(m => {
+      batch.set(doc(db, 'inventory_movements', m.id), m);
+    });
+
+    // Initial Notifications
+    const initialNotifications: NotificationItem[] = [
+      {
+        id: 'notif-1',
+        title: 'Pago pendiente vencido',
+        message: 'Pinturerías del Centro S.R.L. registra un saldo vencido de $785.000 (Factura FAC-A-0004-00000912).',
+        type: 'pago_pendiente',
+        targetEntityId: 'cust-1',
+        isRead: false,
+        createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+        actionUrl: 'customers'
+      },
+      {
+        id: 'notif-2',
+        title: 'Pedido listo para entrega',
+        message: 'El pedido PED-2026-090 de Ferretería Industrial Norte tiene el remito preparado y está listo para retiro por Cruz del Sur.',
+        type: 'pedido_listo',
+        targetEntityId: 'order-102',
+        isRead: false,
+        createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+        actionUrl: 'sales'
+      },
+      {
+        id: 'notif-3',
+        title: 'Lote de producción en proceso',
+        message: 'Orden OP-2026-0042 (1.000 kg Látex Interior) pasó a fase de envasado en baldes de 20L.',
+        type: 'produccion_progreso',
+        targetEntityId: 'po-1',
+        isRead: false,
+        createdAt: new Date(Date.now() - 3600000 * 1).toISOString(),
+        actionUrl: 'production'
+      },
+      {
+        id: 'notif-4',
+        title: 'Despacho en viaje',
+        message: 'El camión de fábrica inició el reparto hacia depósito CABA para la orden PED-2026-089.',
+        type: 'despacho_en_camino',
+        targetEntityId: 'order-101',
+        isRead: false,
+        createdAt: new Date(Date.now() - 3600000 * 6).toISOString(),
+        actionUrl: 'logistics'
+      }
+    ];
+
+    initialNotifications.forEach(n => {
+      batch.set(doc(db, 'notifications', n.id), n);
+    });
+
+    // Financial Transactions (Daily Cash Flow)
+    const initialTransactions: FinancialTransaction[] = [
+      { id: 'tx-1', type: 'cobro_cliente', direction: 'ingreso', amount: 613155, date: new Date().toISOString(), entityId: 'cust-1', entityName: 'Pinturerías del Centro S.R.L.', paymentMethod: 'transferencia', concept: 'Cobro parcial pedido PED-2026-089', receiptNumber: 'REC-0001-000412' },
+      { id: 'tx-2', type: 'pago_proveedor', direction: 'egreso', amount: 950000, date: new Date(Date.now() - 86400000).toISOString(), entityId: 'sup-1', entityName: 'Química del Plata S.A.', paymentMethod: 'echeq', concept: 'Pago factura resina acrílica F-4890', receiptNumber: 'OP-PAG-912' },
+      { id: 'tx-3', type: 'cobro_cliente', direction: 'ingreso', amount: 251280, date: new Date().toISOString(), entityId: 'cust-3', entityName: 'Carlos Alberto Rodríguez', paymentMethod: 'transferencia', concept: 'Cobro contado orden PED-2026-091', receiptNumber: 'REC-0001-000413' },
+      { id: 'tx-4', type: 'gasto_operativo', direction: 'egreso', amount: 180000, date: new Date(Date.now() - 86400000 * 2).toISOString(), entityName: 'Mantenimiento Electromecánico', paymentMethod: 'transferencia', concept: 'Servicio técnico preventivo dispersor industrial #2' }
+    ];
+
+    initialTransactions.forEach(tx => {
+      batch.set(doc(db, 'financial_transactions', tx.id), tx);
+    });
+
+    // Company Configuration & ARCA Parameters
+    const initialConfig: CompanyConfig = {
+      id: 'main_config',
+      companyName: 'Colorear Pinturas S.R.L.',
+      tradeName: 'Colorear PINTURAS',
+      cuit: '30-71489234-8',
+      arcaPointOfSale: 4,
+      arcaEnvironment: 'homologacion', // o produccion
+      grossIncomeNumber: '901-294812-3',
+      activityStartDate: '01/03/2012',
+      fiscalAddress: 'Av. Industria Química 4520, Parque Industrial Pilar, Buenos Aires',
+      plantAddress: 'Ruta 8 Km 58, Parque Industrial Pilar, Buenos Aires',
+      phone: '+54 11 4890-7000',
+      whatsappNumber: '5491148907000',
+      email: 'administracion@colorearpinturas.com.ar',
+      notificationWhatsappTemplate: 'Hola {cliente}, le informamos desde Colorear Pinturas que su pedido {pedido} se encuentra {estado}. Transporte asignado: {transporte}. Seguimiento: {tracking}. Muchas gracias.',
+      paymentReminderTemplate: 'Estimado/a {cliente}, le recordamos desde el área de administración de Colorear Pinturas que registra un saldo pendiente de ${monto}. Agradecemos coordinar la cancelación correspondiente. Datos de cuenta CBU: 0720045620000012345678.'
+    };
+
+    batch.set(doc(db, 'company_config', 'main_config'), initialConfig);
+
+    await batch.commit();
+    console.log('Colorear Pinturas database initialized successfully with complete paint factory dataset.');
+  } catch (error) {
+    console.error('Error seeding initial data:', error);
+  }
+}
+
+export const INITIAL_FACTORY_USERS: AppUser[] = [
+  {
+    id: 'user-admin',
+    name: 'Carlos Rossi',
+    email: 'admin@colorearpinturas.com.ar',
+    role: 'admin',
+    roleLabel: 'Gerente General & Admin',
+    password: 'admin',
+    avatarColor: '#d31627',
+    active: true,
+    phone: '+54 11 4890-7001',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'user-prod',
+    name: 'Ing. Martín Valenzuela',
+    email: 'produccion@colorearpinturas.com.ar',
+    role: 'produccion',
+    roleLabel: 'Jefe de Planta & Fórmulas',
+    password: 'planta',
+    avatarColor: '#ea580c',
+    active: true,
+    phone: '+54 11 4890-7002',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'user-ventas',
+    name: 'Florencia Gómez',
+    email: 'ventas@colorearpinturas.com.ar',
+    role: 'ventas',
+    roleLabel: 'Ventas, Pedidos & ARCA',
+    password: 'ventas',
+    avatarColor: '#0284c7',
+    active: true,
+    phone: '+54 11 4890-7003',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'user-logistica',
+    name: 'Roberto Méndez',
+    email: 'logistica@colorearpinturas.com.ar',
+    role: 'logistica',
+    roleLabel: 'Logística & Despachos',
+    password: 'chofer',
+    avatarColor: '#16a34a',
+    active: true,
+    phone: '+54 11 4890-7004',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'user-finanzas',
+    name: 'Mariana Benítez',
+    email: 'finanzas@colorearpinturas.com.ar',
+    role: 'finanzas',
+    roleLabel: 'Cuentas Corrientes & Finanzas',
+    password: 'finanzas',
+    avatarColor: '#7c3aed',
+    active: true,
+    phone: '+54 11 4890-7005',
+    createdAt: new Date().toISOString()
+  }
+];
+
+export async function seedUsersIfEmpty(): Promise<AppUser[]> {
+  try {
+    const userSnap = await getDocs(collection(db, 'app_users'));
+    if (!userSnap.empty) {
+      return userSnap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser));
+    }
+    const batch = writeBatch(db);
+    INITIAL_FACTORY_USERS.forEach(u => {
+      batch.set(doc(db, 'app_users', u.id), u);
+    });
+    await batch.commit();
+    return INITIAL_FACTORY_USERS;
+  } catch (e) {
+    console.warn("Could not seed users from firestore, using local defaults:", e);
+    return INITIAL_FACTORY_USERS;
+  }
+}
+
+// Function to synchronize or update all 170+ items from the official Colorear Pinturas Agosto 2026 price list with SKUs
+export async function syncOfficialAugust2026PriceList(): Promise<Product[]> {
+  const products = generateColorearProducts();
+  const batch = writeBatch(db);
+
+  products.forEach(p => {
+    batch.set(doc(db, 'products', p.id), p);
+  });
+
+  await batch.commit();
+  console.log(`Synchronized ${products.length} official Colorear Pinturas products with SKU codes.`);
+  return products;
+}
+

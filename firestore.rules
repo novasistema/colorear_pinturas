@@ -1,8 +1,84 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Nova Systems ERP rules - allow authenticated and local business access
-    match /{document=**} {
+
+    // Raw Materials collection
+    match /raw_materials/{materialId} {
+      allow read, write: if true;
+    }
+
+    // Formulas collection
+    match /formulas/{formulaId} {
+      allow read, write: if true;
+    }
+
+    // Production Orders
+    match /production_orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Products catalog
+    match /products/{productId} {
+      allow read, write: if true;
+    }
+
+    // Inventory movements log
+    match /inventory_movements/{movementId} {
+      allow read, write: if true;
+    }
+
+    // Customers (Clients query for portal and checking account)
+    match /customers/{customerId} {
+      allow read, write: if true;
+    }
+
+    // Sales Orders
+    match /sales_orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Invoices
+    match /invoices/{invoiceId} {
+      allow read, write: if true;
+    }
+
+    // Transports
+    match /transports/{transportId} {
+      allow read, write: if true;
+    }
+
+    // Suppliers
+    match /suppliers/{supplierId} {
+      allow read, write: if true;
+    }
+
+    // Purchase Orders
+    match /purchase_orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Financial Transactions
+    match /financial_transactions/{transactionId} {
+      allow read, write: if true;
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Company Configuration
+    match /company_config/{configId} {
+      allow read, write: if true;
+    }
+
+    // App Users for factory staff & permissions
+    match /app_users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Connection test document
+    match /test/{docId} {
       allow read, write: if true;
     }
   }
