@@ -7,6 +7,8 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   Truck, 
+  DollarSign,
+  Boxes,
   Menu,
   ExternalLink,
   X,

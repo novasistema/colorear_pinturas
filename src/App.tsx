@@ -17,8 +17,15 @@ import {
   OperationType,
   syncOfficialAugust2026PriceList,
   INITIAL_FACTORY_USERS,
-  seedUsersIfEmpty
+  seedUsersIfEmpty,
+  seedFinanceAndStaffIfEmpty
 } from './services/firebase';
+import { 
+  getStoredBackupConfig, 
+  isBackupDue, 
+  createFullBackupSnapshot, 
+  downloadBackupPackage 
+} from './services/backupAndResetService';
 import { 
   RawMaterial, 
   Formula, 
@@ -35,7 +42,13 @@ import {
   CompanyConfig, 
   ModuleKey, 
   SalesOrderStatus,
-  AppUser
+  AppUser,
+  CheckItem,
+  CheckStatus,
+  Cashbox,
+  CashMovement,
+  Employee,
+  SalaryPayment
 } from './types';
 
 // Components
@@ -54,6 +67,11 @@ import { CustomerPortal } from './components/CustomerPortal';
 import { SettingsModule } from './components/SettingsModule';
 import { LoginScreen } from './components/LoginScreen';
 import { UsersModule } from './components/UsersModule';
+import { ChecksModule } from './components/ChecksModule';
+import { CashboxModule } from './components/CashboxModule';
+import { AccountingAndProfitabilityModule } from './components/AccountingAndProfitabilityModule';
+import { EmployeesModule } from './components/EmployeesModule';
+import { DebtsAndReceivablesModule } from './components/DebtsAndReceivablesModule';
 import { exportPriceListToExcel } from './utils/exportUtils';
 
 export default function App() {
@@ -88,6 +106,11 @@ export default function App() {
   const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [companyConfig, setCompanyConfig] = useState<CompanyConfig | null>(null);
+  const [checks, setChecks] = useState<CheckItem[]>([]);
+  const [cashboxes, setCashboxes] = useState<Cashbox[]>([]);
+  const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [salaryPayments, setSalaryPayments] = useState<SalaryPayment[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
 
@@ -100,6 +123,7 @@ export default function App() {
         await testConnection();
         await seedInitialDataIfEmpty();
         await seedUsersIfEmpty();
+        await seedFinanceAndStaffIfEmpty();
 
         // Check if official August 2026 catalog with SKUs needs to be synchronized
         const prodSnap = await getDocs(collection(db, 'products'));
@@ -236,6 +260,51 @@ export default function App() {
         });
         unsubscribes.push(unsubUsers);
 
+        // 15. Checks & E-Cheqs
+        const unsubChecks = onSnapshot(collection(db, 'checks'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as CheckItem));
+          setChecks(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'checks');
+        });
+        unsubscribes.push(unsubChecks);
+
+        // 16. Cashboxes & Bank Accounts
+        const unsubBoxes = onSnapshot(collection(db, 'cashboxes'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as Cashbox));
+          setCashboxes(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'cashboxes');
+        });
+        unsubscribes.push(unsubBoxes);
+
+        // 17. Cash Movements (Detailed ledger)
+        const unsubCashMov = onSnapshot(collection(db, 'cash_movements'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as CashMovement));
+          setCashMovements(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'cash_movements');
+        });
+        unsubscribes.push(unsubCashMov);
+
+        // 18. Employees & Staff
+        const unsubEmp = onSnapshot(collection(db, 'employees'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as Employee));
+          setEmployees(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'employees');
+        });
+        unsubscribes.push(unsubEmp);
+
+        // 19. Salary Payments & Advances
+        const unsubSal = onSnapshot(collection(db, 'salary_payments'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as SalaryPayment));
+          setSalaryPayments(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'salary_payments');
+        });
+        unsubscribes.push(unsubSal);
+
         setIsLoading(false);
       } catch (err) {
         console.error('Initialization error:', err);
@@ -249,6 +318,28 @@ export default function App() {
       unsubscribes.forEach(unsub => unsub());
     };
   }, []);
+
+  // Automated Backup scheduler check based on configured frequency
+  useEffect(() => {
+    const checkAutomatedBackup = async () => {
+      const backupCfg = getStoredBackupConfig();
+      if (isBackupDue(backupCfg)) {
+        if (backupCfg.autoDownload) {
+          try {
+            console.log("Plazo de copia de seguridad alcanzado. Generando backup automático...");
+            const pkg = await createFullBackupSnapshot(companyConfig);
+            downloadBackupPackage(pkg);
+          } catch (e) {
+            console.warn("Fallo en la descarga automática del backup:", e);
+          }
+        }
+      }
+    };
+
+    // Run 5 seconds after load so initial data is synced
+    const timer = setTimeout(checkAutomatedBackup, 5000);
+    return () => clearTimeout(timer);
+  }, [companyConfig]);
 
   // --- ACTIONS & AUTOMATIONS ---
 
@@ -413,7 +504,10 @@ export default function App() {
     customerId: string, 
     amount: number, 
     method: FinancialTransaction['paymentMethod'], 
-    concept: string
+    concept: string,
+    receiptNumber?: string,
+    bankInfo?: string,
+    allocatedOrderIds?: string[]
   ) => {
     try {
       const customer = customers.find(c => c.id === customerId);
@@ -426,9 +520,11 @@ export default function App() {
       const custRef = doc(db, 'customers', customerId);
       batch.update(custRef, { currentBalance: newBalance });
 
-      // 2. Add financial transaction
+      // 2. Add financial transaction with full receipt information
       const txId = `tx-${Date.now()}`;
       const txRef = doc(db, 'financial_transactions', txId);
+      const finalReceiptNumber = receiptNumber || `REC-0001-${String(Math.floor(Math.random() * 89999 + 10000)).padStart(8, '0')}`;
+
       batch.set(txRef, {
         id: txId,
         type: 'cobro_cliente',
@@ -439,8 +535,20 @@ export default function App() {
         entityName: customer.businessName,
         paymentMethod: method,
         concept,
-        receiptNumber: `REC-${Math.floor(Math.random() * 89999 + 10000)}`
+        receiptNumber: finalReceiptNumber,
+        notes: bankInfo || ''
       });
+
+      // 3. If allocated to specific orders, mark them as paid in the database
+      if (allocatedOrderIds && allocatedOrderIds.length > 0) {
+        allocatedOrderIds.forEach(orderId => {
+          const oRef = doc(db, 'sales_orders', orderId);
+          batch.update(oRef, {
+            paymentStatus: 'pagado',
+            paidAmount: amount
+          });
+        });
+      }
 
       await batch.commit();
     } catch (error) {
@@ -512,6 +620,218 @@ export default function App() {
     }
   };
 
+  // --- CHECKS / E-CHEQS HANDLERS ---
+  const handleSaveCheck = async (chk: CheckItem) => {
+    try {
+      await setDoc(doc(db, 'checks', chk.id), chk);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'checks');
+    }
+  };
+
+  const handleUpdateCheckStatus = async (checkId: string, status: CheckStatus, notes?: string, destinationId?: string) => {
+    try {
+      const chk = checks.find(c => c.id === checkId);
+      if (!chk) return;
+      const batch = writeBatch(db);
+      const chkRef = doc(db, 'checks', checkId);
+
+      const updateData: Partial<CheckItem> = { status };
+      if (notes) updateData.notes = notes;
+
+      if (status === 'depositado' || status === 'cobrado') {
+        updateData.depositDate = new Date().toISOString();
+        if (destinationId) {
+          updateData.cashboxId = destinationId;
+          const box = cashboxes.find(b => b.id === destinationId);
+          if (box) {
+            batch.update(doc(db, 'cashboxes', box.id), {
+              currentBalance: box.currentBalance + chk.amount
+            });
+            // Record cash movement
+            const movId = `mov-chk-${Date.now()}`;
+            batch.set(doc(db, 'cash_movements', movId), {
+              id: movId,
+              cashboxId: box.id,
+              cashboxName: box.name,
+              type: 'ingreso',
+              amount: chk.amount,
+              category: 'cobranza_clientes',
+              concept: `Acreditación Cheque Nº ${chk.checkNumber} (${chk.bankName})`,
+              date: new Date().toISOString(),
+              referenceNumber: chk.checkNumber,
+              user: currentUser?.name || 'Tesorería',
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+      } else if (status === 'entregado_proveedor' && destinationId) {
+        updateData.deliveredToSupplierId = destinationId;
+        const sup = suppliers.find(s => s.id === destinationId);
+        if (sup) {
+          updateData.deliveredToSupplierName = sup.businessName;
+        }
+      }
+
+      batch.update(chkRef, updateData);
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'checks');
+    }
+  };
+
+  // --- CASHBOX & MOVEMENTS HANDLERS ---
+  const handleSaveCashbox = async (box: Cashbox) => {
+    try {
+      await setDoc(doc(db, 'cashboxes', box.id), box);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'cashboxes');
+    }
+  };
+
+  const handleAddCashMovement = async (mov: CashMovement) => {
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'cash_movements', mov.id), mov);
+
+      const box = cashboxes.find(b => b.id === mov.cashboxId);
+      if (box) {
+        const delta = mov.type === 'ingreso' ? mov.amount : -mov.amount;
+        batch.update(doc(db, 'cashboxes', box.id), {
+          currentBalance: Math.max(0, box.currentBalance + delta)
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'cash_movements');
+    }
+  };
+
+  const handleTransferBetweenCashboxes = async (fromId: string, toId: string, amount: number, concept: string) => {
+    try {
+      const fromBox = cashboxes.find(b => b.id === fromId);
+      const toBox = cashboxes.find(b => b.id === toId);
+      if (!fromBox || !toBox) return;
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'cashboxes', fromId), {
+        currentBalance: Math.max(0, fromBox.currentBalance - amount)
+      });
+      batch.update(doc(db, 'cashboxes', toId), {
+        currentBalance: toBox.currentBalance + amount
+      });
+
+      const movId = `trf-${Date.now()}`;
+      batch.set(doc(db, 'cash_movements', movId), {
+        id: movId,
+        cashboxId: fromId,
+        cashboxName: fromBox.name,
+        type: 'transferencia',
+        amount,
+        category: 'transferencia_entre_cajas',
+        concept: concept || `Transferencia hacia ${toBox.name}`,
+        date: new Date().toISOString(),
+        destinationCashboxId: toId,
+        destinationCashboxName: toBox.name,
+        user: currentUser?.name || 'Administración',
+        createdAt: new Date().toISOString()
+      });
+
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'cashboxes');
+    }
+  };
+
+  const handleRecordSupplierPayment = async (supplierId: string, amount: number, cashboxId: string, notes: string) => {
+    try {
+      const sup = suppliers.find(s => s.id === supplierId);
+      const box = cashboxes.find(b => b.id === cashboxId);
+      const batch = writeBatch(db);
+
+      if (box) {
+        batch.update(doc(db, 'cashboxes', box.id), {
+          currentBalance: Math.max(0, box.currentBalance - amount)
+        });
+      }
+
+      const txId = `tx-sup-${Date.now()}`;
+      batch.set(doc(db, 'financial_transactions', txId), {
+        id: txId,
+        type: 'pago_proveedor',
+        direction: 'egreso',
+        amount,
+        date: new Date().toISOString(),
+        entityId: supplierId,
+        entityName: sup?.businessName || 'Proveedor',
+        paymentMethod: box?.type === 'banco' ? 'transferencia' : 'efectivo',
+        concept: notes || `Pago a proveedor ${sup?.businessName || ''}`,
+        receiptNumber: `OP-${Date.now().toString().slice(-6)}`
+      });
+
+      const movId = `mov-sup-${Date.now()}`;
+      batch.set(doc(db, 'cash_movements', movId), {
+        id: movId,
+        cashboxId: cashboxId || (cashboxes[0]?.id || 'box-planta'),
+        cashboxName: box?.name || 'Caja Planta',
+        type: 'egreso',
+        amount,
+        category: 'materias_primas',
+        concept: `Pago a proveedor: ${sup?.businessName || ''}. ${notes}`,
+        date: new Date().toISOString(),
+        user: currentUser?.name || 'Finanzas',
+        createdAt: new Date().toISOString()
+      });
+
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'suppliers');
+    }
+  };
+
+  // --- STAFF & SALARY HANDLERS ---
+  const handleSaveEmployee = async (emp: Employee) => {
+    try {
+      await setDoc(doc(db, 'employees', emp.id), emp);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'employees');
+    }
+  };
+
+  const handleRecordSalaryPayment = async (payment: SalaryPayment) => {
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'salary_payments', payment.id), payment);
+
+      const box = cashboxes.find(b => b.id === payment.cashboxId);
+      if (box) {
+        batch.update(doc(db, 'cashboxes', box.id), {
+          currentBalance: Math.max(0, box.currentBalance - payment.netAmount)
+        });
+      }
+
+      const movId = `mov-sal-${Date.now()}`;
+      batch.set(doc(db, 'cash_movements', movId), {
+        id: movId,
+        cashboxId: payment.cashboxId || 'box-planta',
+        cashboxName: box?.name || 'Caja Planta',
+        type: 'egreso',
+        amount: payment.netAmount,
+        category: payment.paymentType === 'adelanto' ? 'adelanto_sueldos' : 'sueldos_jornales',
+        concept: `Liquidación ${payment.paymentNumber} - ${payment.employeeName} (${payment.period})`,
+        date: payment.date || new Date().toISOString(),
+        employeeId: payment.employeeId,
+        employeeName: payment.employeeName,
+        user: currentUser?.name || 'Recursos Humanos',
+        createdAt: new Date().toISOString()
+      });
+
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'salary_payments');
+    }
+  };
+
   // Customer Portal Login / Logout
   const handleLoginClient = (taxId: string) => {
     setPortalClientTaxId(taxId);
@@ -539,6 +859,14 @@ export default function App() {
   const productionActiveCount = productionOrders.filter(o => o.status === 'en_proceso' || o.status === 'planificada').length;
   const pendingDispatchCount = salesOrders.filter(o => o.status === 'preparando_remito' || o.status === 'facturado').length;
   const pendingPaymentCount = customers.filter(c => c.currentBalance > 0).length;
+
+  const urgentChecksCount = checks.filter(c => {
+    if (c.status !== 'en_cartera') return false;
+    const dueTime = new Date(c.dueDate).getTime();
+    const nowTime = new Date().getTime();
+    const diffDays = Math.ceil((dueTime - nowTime) / (1000 * 60 * 60 * 24));
+    return diffDays <= 7;
+  }).length;
 
   if (isLoading) {
     return (
@@ -595,7 +923,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-red-500 selection:text-white">
+    <div className="h-screen max-h-screen overflow-hidden bg-slate-100 flex flex-col selection:bg-red-500 selection:text-white">
       {/* Top Header */}
       <Header
         activeModule={activeModule}
@@ -611,20 +939,22 @@ export default function App() {
         onOpenCustomerPortalModal={() => setActiveModule('customer_portal')}
       />
 
-      {/* Main Container */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
+      {/* Main Container - Strict Independent Scrolling */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Sidebar (Fixed in place, independently scrollable, distinct separation) */}
         <Sidebar
           activeModule={activeModule}
           setActiveModule={setActiveModule}
           productionActiveCount={productionActiveCount}
           pendingDispatchCount={pendingDispatchCount}
           pendingPaymentCount={pendingPaymentCount}
+          urgentChecksCount={urgentChecksCount}
         />
 
-        {/* Content View */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
-          {activeModule === 'desktop' && (
+        {/* Content View (Independently scrollable, scrolling here does NOT move the sidebar) */}
+        <main className="flex-1 h-full overflow-y-auto bg-slate-100/70 relative">
+          <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
+            {activeModule === 'desktop' && (
             <DesktopModule
               setActiveModule={setActiveModule}
               productionOrders={productionOrders}
@@ -635,6 +965,7 @@ export default function App() {
               onOpenNewProductionModal={() => setActiveModule('production')}
               onOpenNewSalesModal={() => setActiveModule('sales')}
               onExportPriceListExcel={() => exportPriceListToExcel(products, companyConfig || undefined)}
+              onNavigateToCustomer={(cust) => setActiveModule('customers')}
             />
           )}
 
@@ -731,6 +1062,7 @@ export default function App() {
             <CustomersModule
               customers={customers}
               salesOrders={salesOrders}
+              financialTransactions={financialTransactions}
               transports={transports}
               config={companyConfig}
               onSaveCustomer={async (cust) => {
@@ -767,13 +1099,73 @@ export default function App() {
           )}
 
           {activeModule === 'finances' && (
-            <FinancesModule
-              transactions={financialTransactions}
+            <DebtsAndReceivablesModule
               customers={customers}
               suppliers={suppliers}
-              onAddTransaction={async (tx) => {
-                await setDoc(doc(db, 'financial_transactions', tx.id), tx);
-              }}
+              purchaseOrders={purchaseOrders}
+              salesOrders={salesOrders}
+              cashboxes={cashboxes}
+              config={companyConfig}
+              onNavigateToCustomer={(customer) => setActiveModule('customers')}
+              onRecordSupplierPayment={handleRecordSupplierPayment}
+            />
+          )}
+
+          {activeModule === 'checks' && (
+            <ChecksModule
+              checks={checks}
+              customers={customers}
+              suppliers={suppliers}
+              cashboxes={cashboxes}
+              onSaveCheck={handleSaveCheck}
+              onUpdateCheckStatus={handleUpdateCheckStatus}
+            />
+          )}
+
+          {activeModule === 'cashboxes' && (
+            <CashboxModule
+              cashboxes={cashboxes}
+              movements={cashMovements}
+              onSaveCashbox={handleSaveCashbox}
+              onAddMovement={handleAddCashMovement}
+              onTransferBetweenCashboxes={handleTransferBetweenCashboxes}
+            />
+          )}
+
+          {activeModule === 'accounting' && (
+            <AccountingAndProfitabilityModule
+              salesOrders={salesOrders}
+              purchaseOrders={purchaseOrders}
+              productionOrders={productionOrders}
+              products={products}
+              rawMaterials={rawMaterials}
+              cashMovements={cashMovements}
+              config={companyConfig}
+              initialTab="iva_reports"
+            />
+          )}
+
+          {activeModule === 'profitability' && (
+            <AccountingAndProfitabilityModule
+              salesOrders={salesOrders}
+              purchaseOrders={purchaseOrders}
+              productionOrders={productionOrders}
+              products={products}
+              rawMaterials={rawMaterials}
+              cashMovements={cashMovements}
+              config={companyConfig}
+              initialTab="income_statement"
+            />
+          )}
+
+          {activeModule === 'employees' && (
+            <EmployeesModule
+              employees={employees}
+              salaryPayments={salaryPayments}
+              cashboxes={cashboxes}
+              config={companyConfig}
+              onSaveEmployee={handleSaveEmployee}
+              onRecordSalaryPayment={handleRecordSalaryPayment}
             />
           )}
 
@@ -783,6 +1175,9 @@ export default function App() {
               salesOrders={salesOrders}
               products={products}
               rawMaterials={rawMaterials}
+              customers={customers}
+              onNavigateToCustomer={(cust) => setActiveModule('customers')}
+              onNavigateModule={setActiveModule}
             />
           )}
 
@@ -804,6 +1199,16 @@ export default function App() {
                 await setDoc(doc(db, 'company_config', 'main_config'), cfg);
                 setCompanyConfig(cfg);
               }}
+              onResetCompleted={() => {
+                setSalesOrders([]);
+                setProductionOrders([]);
+                setPurchaseOrders([]);
+                setFinancialTransactions([]);
+                setInventoryMovements([]);
+                setChecks([]);
+                setCashMovements([]);
+                setSalaryPayments([]);
+              }}
             />
           )}
 
@@ -819,6 +1224,7 @@ export default function App() {
               }}
             />
           )}
+          </div>
         </main>
       </div>
     </div>

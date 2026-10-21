@@ -198,6 +198,7 @@ export interface Transport {
 export interface Supplier {
   id: string;
   businessName: string;
+  name?: string;
   taxId: string;
   email: string;
   phone: string;
@@ -273,6 +274,11 @@ export type ModuleKey =
   | 'sales'
   | 'prices'
   | 'customers'
+  | 'checks'
+  | 'cashboxes'
+  | 'accounting'
+  | 'profitability'
+  | 'employees'
   | 'logistics'
   | 'purchases'
   | 'finances'
@@ -280,6 +286,147 @@ export type ModuleKey =
   | 'customer_portal'
   | 'settings'
   | 'users';
+
+// --- CHEQUES & E-CHEQS ---
+export type CheckType = 'cheque_fisico' | 'echeq';
+export type CheckStatus = 'en_cartera' | 'depositado' | 'cobrado' | 'entregado_proveedor' | 'rechazado';
+
+export interface CheckItem {
+  id: string;
+  checkNumber: string;
+  type: CheckType;
+  bankName: string;
+  issuerTaxId: string;
+  issuerName: string;
+  amount: number;
+  issueDate: string;
+  dueDate: string; // Fecha de cobro / vencimiento
+  status: CheckStatus;
+  receivedFromType: 'cliente' | 'propio' | 'otro';
+  customerId?: string;
+  customerName?: string;
+  deliveredToSupplierId?: string;
+  deliveredToSupplierName?: string;
+  cashboxId?: string;
+  notes?: string;
+  depositDate?: string;
+  createdAt: string;
+}
+
+// --- CAJAS DE DINERO & MOVIMIENTOS ---
+export type CashboxType = 'efectivo' | 'banco' | 'digital' | 'caja_chica';
+
+export interface Cashbox {
+  id: string;
+  name: string;
+  type: CashboxType;
+  currency: 'ARS' | 'USD';
+  currentBalance: number;
+  accountNumberOrCbu?: string;
+  bankName?: string;
+  responsiblePerson: string;
+  isDefault?: boolean;
+  updatedAt: string;
+}
+
+export type CashMovementCategory =
+  | 'materias_primas'
+  | 'envases_embalajes'
+  | 'sueldos_jornales'
+  | 'adelanto_sueldos'
+  | 'fletes_logistica'
+  | 'mantenimiento_maquinaria'
+  | 'servicios_luz_gas'
+  | 'impuestos_tasas'
+  | 'alquiler_planta'
+  | 'cobranza_clientes'
+  | 'venta_mostrador'
+  | 'transferencia_entre_cajas'
+  | 'gastos_oficina'
+  | 'otros_ingresos'
+  | 'otros_egresos';
+
+export interface CashMovement {
+  id: string;
+  cashboxId: string;
+  cashboxName: string;
+  type: 'ingreso' | 'egreso' | 'transferencia';
+  amount: number;
+  category: CashMovementCategory;
+  concept: string;
+  date: string;
+  referenceNumber?: string;
+  destinationCashboxId?: string;
+  destinationCashboxName?: string;
+  employeeId?: string;
+  employeeName?: string;
+  receiptUrl?: string;
+  user: string;
+  createdAt: string;
+}
+
+// --- PERSONAL, EMPLEADOS & SUELDOS ---
+export type EmployeeSector = 
+  | 'dispersion_fabricacion'
+  | 'control_calidad_laboratorio'
+  | 'envasado_fraccionamiento'
+  | 'logistica_chofer'
+  | 'mantenimiento_taller'
+  | 'administracion_finanzas'
+  | 'ventas_mostrador';
+
+export interface Employee {
+  id: string;
+  cuil: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  sector: EmployeeSector;
+  position: string;
+  hireDate: string;
+  phone: string;
+  email: string;
+  address: string;
+  city: string;
+  contractType: 'mensualizado' | 'jornal' | 'quincenal';
+  baseSalary: number; // Importe de sueldo básico acordado
+  hourlyRate?: number;
+  bankName?: string;
+  cbuOrAlias?: string;
+  active: boolean;
+  notes?: string;
+  createdAt: string;
+}
+
+export type SalaryPaymentType = 'sueldo_mensual' | 'quincena' | 'adelanto' | 'aguinaldo_sac' | 'bono';
+
+export interface SalaryPaymentItem {
+  concept: string;
+  amount: number;
+  type: 'haber' | 'descuento';
+}
+
+export interface SalaryPayment {
+  id: string;
+  paymentNumber: string; // e.g. REC-SUEL-2026-001
+  employeeId: string;
+  employeeName: string;
+  employeeCuil: string;
+  employeePosition: string;
+  paymentType: SalaryPaymentType;
+  period: string; // e.g. "Agosto 2026", "1º Quincena Agosto 2026"
+  date: string;
+  grossAmount: number;
+  deductionsAmount: number; // e.g. adelantos previos
+  netAmount: number;
+  paymentMethod: 'efectivo' | 'transferencia';
+  cashboxId?: string;
+  cashboxName?: string;
+  bankRef?: string;
+  items: SalaryPaymentItem[];
+  notes?: string;
+  createdAt: string;
+}
 
 export type UserRole = 'admin' | 'produccion' | 'ventas' | 'logistica' | 'finanzas';
 

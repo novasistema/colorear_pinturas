@@ -77,6 +77,31 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Checks & E-Cheqs portfolio
+    match /checks/{checkId} {
+      allow read, write: if true;
+    }
+
+    // Cashboxes & Money Accounts
+    match /cashboxes/{cashboxId} {
+      allow read, write: if true;
+    }
+
+    // Cash movements & transfers
+    match /cash_movements/{movementId} {
+      allow read, write: if true;
+    }
+
+    // Employees & Staff records
+    match /employees/{employeeId} {
+      allow read, write: if true;
+    }
+
+    // Salary & Advance payments
+    match /salary_payments/{paymentId} {
+      allow read, write: if true;
+    }
+
     // Connection test document
     match /test/{docId} {
       allow read, write: if true;

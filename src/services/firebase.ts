@@ -23,7 +23,13 @@ import {
   SalesOrder, 
   NotificationItem, 
   FinancialTransaction,
-  InventoryMovement 
+  InventoryMovement,
+  AppUser,
+  CheckItem,
+  Cashbox,
+  CashMovement,
+  Employee,
+  SalaryPayment
 } from '../types';
 
 export enum OperationType {
@@ -663,5 +669,202 @@ export async function syncOfficialAugust2026PriceList(): Promise<Product[]> {
   await batch.commit();
   console.log(`Synchronized ${products.length} official Colorear Pinturas products with SKU codes.`);
   return products;
+}
+
+// Initial cashboxes, checks portfolio and employees for the factory
+export async function seedFinanceAndStaffIfEmpty() {
+  try {
+    const boxSnap = await getDocs(collection(db, 'cashboxes'));
+    if (!boxSnap.empty) return; // already seeded
+
+    const batch = writeBatch(db);
+
+    // Initial Cashboxes
+    const initialCashboxes: Cashbox[] = [
+      {
+        id: 'box-planta',
+        name: 'Caja Mostrador Planta (Efectivo)',
+        type: 'efectivo',
+        currency: 'ARS',
+        currentBalance: 840000,
+        responsiblePerson: 'Tesorería Planta',
+        isDefault: true,
+        updatedAt: new Date().toISOString()
+      },
+      {
+        id: 'box-galicia',
+        name: 'Banco Galicia Cta. Cte. Operativa',
+        type: 'banco',
+        currency: 'ARS',
+        currentBalance: 5820000,
+        accountNumberOrCbu: '0720045620000012345678',
+        bankName: 'Banco Galicia',
+        responsiblePerson: 'Administración & Finanzas',
+        updatedAt: new Date().toISOString()
+      },
+      {
+        id: 'box-fuerte',
+        name: 'Caja Fuerte / Tesorería Central',
+        type: 'efectivo',
+        currency: 'ARS',
+        currentBalance: 2450000,
+        responsiblePerson: 'Gerencia General',
+        updatedAt: new Date().toISOString()
+      },
+      {
+        id: 'box-mp',
+        name: 'Mercado Pago Cobros Digitales',
+        type: 'digital',
+        currency: 'ARS',
+        currentBalance: 615000,
+        responsiblePerson: 'Ventas Web',
+        updatedAt: new Date().toISOString()
+      }
+    ];
+
+    initialCashboxes.forEach(b => batch.set(doc(db, 'cashboxes', b.id), b));
+
+    // Initial Checks in Portfolio
+    const initialChecks: CheckItem[] = [
+      {
+        id: 'chk-1',
+        checkNumber: '89104820',
+        type: 'echeq',
+        bankName: 'Banco Santander',
+        issuerTaxId: '30-71829401-2',
+        issuerName: 'Pinturerías Rex S.A.',
+        amount: 850000,
+        issueDate: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // In 2 days!
+        status: 'en_cartera',
+        receivedFromType: 'cliente',
+        customerName: 'Pinturerías Rex S.A.',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'chk-2',
+        checkNumber: '44910283',
+        type: 'cheque_fisico',
+        bankName: 'Banco Macro',
+        issuerTaxId: '30-68912345-4',
+        issuerName: 'Ferretería Industrial Norte S.A.',
+        amount: 620000,
+        issueDate: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // In 5 days!
+        status: 'en_cartera',
+        receivedFromType: 'cliente',
+        customerName: 'Ferretería Industrial Norte S.A.',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'chk-3',
+        checkNumber: '77291038',
+        type: 'echeq',
+        bankName: 'Banco BBVA',
+        issuerTaxId: '20-28945612-8',
+        issuerName: 'Pinturas del Centro S.R.L.',
+        amount: 1150000,
+        issueDate: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 18 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        status: 'en_cartera',
+        receivedFromType: 'cliente',
+        customerName: 'Pinturas del Centro S.R.L.',
+        createdAt: new Date().toISOString()
+      }
+    ];
+
+    initialChecks.forEach(c => batch.set(doc(db, 'checks', c.id), c));
+
+    // Initial Employees
+    const initialEmployees: Employee[] = [
+      {
+        id: 'emp-1',
+        cuil: '20-33491823-9',
+        firstName: 'Matías',
+        lastName: 'Ríos',
+        fullName: 'Ríos, Matías',
+        sector: 'dispersion_fabricacion',
+        position: 'Maquinista de Dispersión Rápida',
+        hireDate: '2021-03-15',
+        phone: '+54 11 5829-3321',
+        email: 'mrios@colorearpinturas.com.ar',
+        address: 'Calle 14 Nº 842',
+        city: 'Pilar',
+        contractType: 'mensualizado',
+        baseSalary: 920000,
+        bankName: 'Banco Provincia',
+        cbuOrAlias: '0140028103502918294812',
+        active: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'emp-2',
+        cuil: '27-36892145-4',
+        firstName: 'Valeria',
+        lastName: 'Gómez',
+        fullName: 'Gómez, Valeria',
+        sector: 'control_calidad_laboratorio',
+        position: 'Técnica Química / Control Calidad',
+        hireDate: '2022-06-01',
+        phone: '+54 11 6492-8172',
+        email: 'vgomez@colorearpinturas.com.ar',
+        address: 'Av. Tratado del Pilar 450',
+        city: 'Pilar',
+        contractType: 'mensualizado',
+        baseSalary: 1050000,
+        bankName: 'Banco Galicia',
+        cbuOrAlias: '0720045688000039281729',
+        active: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'emp-3',
+        cuil: '20-29481723-5',
+        firstName: 'Esteban',
+        lastName: 'Fernández',
+        fullName: 'Fernández, Esteban',
+        sector: 'logistica_chofer',
+        position: 'Chofer Reparto Fábrica / Logística',
+        hireDate: '2020-09-10',
+        phone: '+54 11 4910-8273',
+        email: 'efernandez@colorearpinturas.com.ar',
+        address: 'Ruta 8 Km 52',
+        city: 'Del Viso',
+        contractType: 'mensualizado',
+        baseSalary: 880000,
+        bankName: 'Banco Nación',
+        cbuOrAlias: '0110034291000084920194',
+        active: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'emp-4',
+        cuil: '20-38491029-7',
+        firstName: 'Lucas',
+        lastName: 'Romero',
+        fullName: 'Romero, Lucas',
+        sector: 'envasado_fraccionamiento',
+        position: 'Operario Envasado y Paletizado Baldes',
+        hireDate: '2023-01-15',
+        phone: '+54 11 7382-9102',
+        email: 'lromero@colorearpinturas.com.ar',
+        address: 'Barrio San Alejo 214',
+        city: 'Pilar',
+        contractType: 'mensualizado',
+        baseSalary: 790000,
+        bankName: 'Banco Provincia',
+        cbuOrAlias: '0140028103502919482710',
+        active: true,
+        createdAt: new Date().toISOString()
+      }
+    ];
+
+    initialEmployees.forEach(e => batch.set(doc(db, 'employees', e.id), e));
+
+    await batch.commit();
+    console.log("Seeded initial cashboxes, checks, and employees.");
+  } catch (err) {
+    console.warn("Could not seed initial finance/staff:", err);
+  }
 }
 
