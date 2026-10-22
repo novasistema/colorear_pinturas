@@ -102,6 +102,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Street Sellers
+    match /sellers/{sellerId} {
+      allow read, write: if true;
+    }
+
+    // Daily Route Sheets for Street Sellers
+    match /route_sheets/{routeSheetId} {
+      allow read, write: if true;
+    }
+
     // Connection test document
     match /test/{docId} {
       allow read, write: if true;

@@ -15,7 +15,8 @@ import {
   Factory,
   ShoppingCart,
   Truck,
-  CircleDollarSign
+  CircleDollarSign,
+  Compass
 } from 'lucide-react';
 import { AppUser, UserRole } from '../types';
 
@@ -54,6 +55,7 @@ export const UsersModule: React.FC<UsersModuleProps> = ({
     { role: 'admin', label: 'Gerente General & Admin', color: '#d31627', icon: ShieldCheck },
     { role: 'produccion', label: 'Jefe de Planta & Fórmulas', color: '#ea580c', icon: Factory },
     { role: 'ventas', label: 'Ventas, Pedidos & ARCA', color: '#0284c7', icon: ShoppingCart },
+    { role: 'vendedor_calle', label: 'Vendedor de Calle / Preventista', color: '#059669', icon: Compass },
     { role: 'logistica', label: 'Logística & Despachos', color: '#16a34a', icon: Truck },
     { role: 'finanzas', label: 'Cuentas Corrientes & Finanzas', color: '#7c3aed', icon: CircleDollarSign },
   ];

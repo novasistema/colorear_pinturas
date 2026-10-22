@@ -29,7 +29,9 @@ import {
   Cashbox,
   CashMovement,
   Employee,
-  SalaryPayment
+  SalaryPayment,
+  Seller,
+  RouteSheet
 } from '../types';
 
 export enum OperationType {
@@ -300,10 +302,54 @@ export async function seedInitialDataIfEmpty() {
 
     // Suppliers
     const initialSuppliers: Supplier[] = [
-      { id: 'sup-1', businessName: 'Química del Plata S.A.', taxId: '30-55112233-4', email: 'ventas@quimicadelplata.com.ar', phone: '+54 11 4755-1234', category: 'Resinas sintéticas y solventes', paymentTerms: '30 días F.F.' },
-      { id: 'sup-2', businessName: 'Pigmentos Industriales S.R.L.', taxId: '30-66223344-5', email: 'contacto@pigmentosind.com.ar', phone: '+54 11 4200-9876', category: 'Dióxidos y óxidos de hierro', paymentTerms: 'Cheques 30/60' },
-      { id: 'sup-3', businessName: 'Minerales Cordillera', taxId: '30-77334455-6', email: 'pedidos@mineralescordillera.com.ar', phone: '+54 264 423-4567', category: 'Carbonatos, caolines y talcos', paymentTerms: 'Transferencia 15 días' },
-      { id: 'sup-4', businessName: 'Envases Plásticos del Sol', taxId: '30-88445566-7', email: 'ventas@envasesdelsol.com.ar', phone: '+54 11 4455-6677', category: 'Baldes plásticos 10L y 20L', paymentTerms: 'Contra entrega' }
+      { 
+        id: 'sup-1', 
+        businessName: 'Química del Plata S.A.', 
+        taxId: '30-55112233-4', 
+        email: 'ventas@quimicadelplata.com.ar', 
+        phone: '+54 11 4755-1234', 
+        category: 'Resinas sintéticas y solventes', 
+        paymentTerms: '30 días F.F.',
+        discountPercentage: 10,
+        discountConcept: 'Descuento comercial por compras superiores a 1.000 kg',
+        currentBalance: 950000
+      },
+      { 
+        id: 'sup-2', 
+        businessName: 'Pigmentos Industriales S.R.L.', 
+        taxId: '30-66223344-5', 
+        email: 'contacto@pigmentosind.com.ar', 
+        phone: '+54 11 4200-9876', 
+        category: 'Dióxidos y óxidos de hierro', 
+        paymentTerms: 'Cheques 30/60',
+        discountPercentage: 5,
+        discountConcept: 'Bonificación por pronto pago 15 días',
+        currentBalance: 720000
+      },
+      { 
+        id: 'sup-3', 
+        businessName: 'Minerales Cordillera', 
+        taxId: '30-77334455-6', 
+        email: 'pedidos@mineralescordillera.com.ar', 
+        phone: '+54 264 423-4567', 
+        category: 'Carbonatos, caolines y talcos', 
+        paymentTerms: 'Transferencia 15 días',
+        discountPercentage: 8,
+        discountConcept: 'Descuento por carga completa de camión tolva',
+        currentBalance: 480000
+      },
+      { 
+        id: 'sup-4', 
+        businessName: 'Envases Plásticos del Sol', 
+        taxId: '30-88445566-7', 
+        email: 'ventas@envasesdelsol.com.ar', 
+        phone: '+54 11 4455-6677', 
+        category: 'Baldes plásticos 10L y 20L', 
+        paymentTerms: 'Contra entrega',
+        discountPercentage: 7,
+        discountConcept: 'Descuento directo por compra de pallet completo',
+        currentBalance: 310000
+      }
     ];
 
     initialSuppliers.forEach(s => {
@@ -867,4 +913,152 @@ export async function seedFinanceAndStaffIfEmpty() {
     console.warn("Could not seed initial finance/staff:", err);
   }
 }
+
+export async function seedSellersIfEmpty() {
+  try {
+    const sellersSnap = await getDocs(collection(db, 'sellers'));
+    if (!sellersSnap.empty) {
+      return;
+    }
+
+    const batch = writeBatch(db);
+
+    const initialSellers: Seller[] = [
+      {
+        id: 'sel-1',
+        name: 'Gonzalo Peralta',
+        code: 'VEN-01',
+        phone: '+54 11 5491-8822',
+        email: 'gperalta@colorearpinturas.com.ar',
+        zone: 'GBA Norte (San Martín, Caseros, Tigre)',
+        dniOrTaxId: '20-33891234-7',
+        salesCommissionPct: 3.5,
+        collectionCommissionPct: 1.5,
+        active: true,
+        allowedModules: ['desktop', 'sellers', 'sales', 'customers', 'prices'],
+        notes: 'Vendedor senior de calle. Atención a pinturerías y corralones zona norte.',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'sel-2',
+        name: 'Mariana Silveira',
+        code: 'VEN-02',
+        phone: '+54 11 6392-1144',
+        email: 'msilveira@colorearpinturas.com.ar',
+        zone: 'CABA Centro & Zona Sur',
+        dniOrTaxId: '27-35912443-8',
+        salesCommissionPct: 4.0,
+        collectionCommissionPct: 2.0,
+        active: true,
+        allowedModules: ['desktop', 'sellers', 'sales', 'customers', 'prices'],
+        notes: 'Preventista de obra y grandes cuentas en CABA y corredor sur.',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'sel-3',
+        name: 'Darío Benítez',
+        code: 'VEN-03',
+        phone: '+54 341 590-2381',
+        email: 'dbenitez@colorearpinturas.com.ar',
+        zone: 'Rosario & Litoral',
+        dniOrTaxId: '20-31294812-4',
+        salesCommissionPct: 3.0,
+        collectionCommissionPct: 1.0,
+        active: true,
+        allowedModules: ['desktop', 'sellers', 'sales', 'customers', 'prices'],
+        notes: 'Distribución y nuevos clientes en provincia de Santa Fe.',
+        createdAt: new Date().toISOString()
+      }
+    ];
+
+    initialSellers.forEach(s => batch.set(doc(db, 'sellers', s.id), s));
+
+    // Sample Route Sheets for Street Rep
+    const initialRouteSheets: RouteSheet[] = [
+      {
+        id: 'hdr-1',
+        code: 'HDR-2026-001',
+        sellerId: 'sel-1',
+        sellerName: 'Gonzalo Peralta',
+        date: new Date().toISOString().split('T')[0],
+        zone: 'GBA Norte',
+        title: 'Circuito Preventa San Martín & Caseros',
+        status: 'en_progreso',
+        totalStops: 4,
+        visitedStops: 2,
+        totalSalesGenerated: 1155500,
+        totalCollectionsGenerated: 450000,
+        notes: 'Prioridad de visita a clientes con saldo vencido y toma de pedidos látex 20L.',
+        createdAt: new Date().toISOString(),
+        stops: [
+          {
+            id: 'stp-1',
+            orderIndex: 1,
+            customerId: 'cust-1',
+            customerName: 'Pinturerías del Centro S.R.L.',
+            customerAddress: 'Av. Corrientes 4520, CABA',
+            customerPhone: '+54 11 4321-7890',
+            customerCity: 'CABA',
+            currentBalance: 785000,
+            estimatedTime: '09:30',
+            status: 'visitado_con_venta',
+            checkInTime: '09:45',
+            notes: 'Se tomó pedido comercial de 15 baldes Látex Interior 20L y 10 baldes Impermeabilizante.',
+            salesAmount: 1155500
+          },
+          {
+            id: 'stp-2',
+            orderIndex: 2,
+            customerId: 'cust-3',
+            customerName: 'Distribuidora Rex Pinturas',
+            customerAddress: 'Av. San Martín 2100, Caseros',
+            customerPhone: '+54 11 4750-9988',
+            customerCity: 'Caseros',
+            currentBalance: 450000,
+            estimatedTime: '11:15',
+            status: 'visitado_cobranza',
+            checkInTime: '11:25',
+            notes: 'Se cobró cheque a 15 días por saldo de factura anterior. Recibo entregado.',
+            collectedAmount: 450000,
+            receiptNumber: 'REC-0001-00012489'
+          },
+          {
+            id: 'stp-3',
+            orderIndex: 3,
+            customerId: 'cust-2',
+            customerName: 'Ferretería Industrial Norte S.A.',
+            customerAddress: 'Bv. Oroño 2850, Rosario',
+            customerPhone: '+54 341 489-1122',
+            customerCity: 'Rosario',
+            currentBalance: 433200,
+            estimatedTime: '14:30',
+            status: 'pendiente',
+            notes: 'Presentar nueva lista de precios de Agosto y ofrecer esmaltes 3 en 1.'
+          },
+          {
+            id: 'stp-4',
+            orderIndex: 4,
+            customerId: 'cust-4',
+            customerName: 'Corralón & Pinturas El Puente',
+            customerAddress: 'Ruta 8 Km 49.5, Pilar',
+            customerPhone: '+54 230 442-8811',
+            customerCity: 'Pilar',
+            currentBalance: 0,
+            estimatedTime: '16:00',
+            status: 'pendiente',
+            notes: 'Reunión con dueño para reactivar cuenta y ofrecer línea obra 20L.'
+          }
+        ]
+      }
+    ];
+
+    initialRouteSheets.forEach(h => batch.set(doc(db, 'route_sheets', h.id), h));
+
+    await batch.commit();
+    console.log("Seeded initial street sellers and route sheets.");
+  } catch (err) {
+    console.warn("Could not seed initial sellers/route sheets:", err);
+  }
+}
+
 

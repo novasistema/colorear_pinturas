@@ -18,7 +18,8 @@ import {
   syncOfficialAugust2026PriceList,
   INITIAL_FACTORY_USERS,
   seedUsersIfEmpty,
-  seedFinanceAndStaffIfEmpty
+  seedFinanceAndStaffIfEmpty,
+  seedSellersIfEmpty
 } from './services/firebase';
 import { 
   getStoredBackupConfig, 
@@ -48,7 +49,10 @@ import {
   Cashbox,
   CashMovement,
   Employee,
-  SalaryPayment
+  SalaryPayment,
+  DeliveryOrder,
+  Seller,
+  RouteSheet
 } from './types';
 
 // Components
@@ -57,6 +61,7 @@ import { Sidebar } from './components/Sidebar';
 import { DesktopModule } from './components/DesktopModule';
 import { ProductionModule } from './components/ProductionModule';
 import { SalesOrdersModule } from './components/SalesOrdersModule';
+import { SellersModule } from './components/SellersModule';
 import { PriceListModule } from './components/PriceListModule';
 import { CustomersModule } from './components/CustomersModule';
 import { LogisticsModule } from './components/LogisticsModule';
@@ -72,6 +77,7 @@ import { CashboxModule } from './components/CashboxModule';
 import { AccountingAndProfitabilityModule } from './components/AccountingAndProfitabilityModule';
 import { EmployeesModule } from './components/EmployeesModule';
 import { DebtsAndReceivablesModule } from './components/DebtsAndReceivablesModule';
+import { MobileSellerApp } from './components/MobileSellerApp';
 import { exportPriceListToExcel } from './utils/exportUtils';
 
 export default function App() {
@@ -111,6 +117,10 @@ export default function App() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [salaryPayments, setSalaryPayments] = useState<SalaryPayment[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [routeSheets, setRouteSheets] = useState<RouteSheet[]>([]);
+  const [activeSellerContext, setActiveSellerContext] = useState<Seller | null>(null);
+  const [isMobileSellerAppOpen, setIsMobileSellerAppOpen] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
 
@@ -124,6 +134,7 @@ export default function App() {
         await seedInitialDataIfEmpty();
         await seedUsersIfEmpty();
         await seedFinanceAndStaffIfEmpty();
+        await seedSellersIfEmpty();
 
         // Check if official August 2026 catalog with SKUs needs to be synchronized
         const prodSnap = await getDocs(collection(db, 'products'));
@@ -305,6 +316,24 @@ export default function App() {
         });
         unsubscribes.push(unsubSal);
 
+        // 20. Sellers (Vendedores de calle)
+        const unsubSellers = onSnapshot(collection(db, 'sellers'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as Seller));
+          setSellers(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'sellers');
+        });
+        unsubscribes.push(unsubSellers);
+
+        // 21. Route Sheets (Hojas de ruta de preventa)
+        const unsubRoutes = onSnapshot(collection(db, 'route_sheets'), snap => {
+          const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as RouteSheet));
+          setRouteSheets(items);
+        }, error => {
+          handleFirestoreError(error, OperationType.GET, 'route_sheets');
+        });
+        unsubscribes.push(unsubRoutes);
+
         setIsLoading(false);
       } catch (err) {
         console.error('Initialization error:', err);
@@ -318,6 +347,15 @@ export default function App() {
       unsubscribes.forEach(unsub => unsub());
     };
   }, []);
+
+  // Auto-redirect if active seller persona cannot access current module
+  useEffect(() => {
+    if (activeSellerContext && activeSellerContext.allowedModules && activeSellerContext.allowedModules.length > 0) {
+      if (!activeSellerContext.allowedModules.includes(activeModule)) {
+        setActiveModule(activeSellerContext.allowedModules[0] || 'sellers');
+      }
+    }
+  }, [activeSellerContext, activeModule]);
 
   // Automated Backup scheduler check based on configured frequency
   useEffect(() => {
@@ -496,6 +534,106 @@ export default function App() {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'sales_orders');
+    }
+  };
+
+  // Emit Delivery Order (Despacho / Remito Parcial) and deduct stock in real time
+  const handleDeliverOrderItems = async (orderId: string, delivery: DeliveryOrder) => {
+    try {
+      const order = salesOrders.find(o => o.id === orderId);
+      if (!order) return;
+
+      const batch = writeBatch(db);
+
+      // 1. Deduct finished goods stock for each item delivered
+      let totalUnitsDeliveredNow = 0;
+      delivery.items.forEach(delItem => {
+        if (delItem.quantity <= 0) return;
+        totalUnitsDeliveredNow += delItem.quantity;
+        const prod = products.find(p => p.id === delItem.productId);
+        if (prod) {
+          const newStock = Math.max(0, prod.stock - delItem.quantity);
+          const pRef = doc(db, 'products', prod.id);
+          batch.update(pRef, { stock: newStock });
+
+          // Kardex inventory movement entry
+          const movId = `mov-${Date.now()}-${Math.floor(Math.random() * 8999 + 1000)}`;
+          const movRef = doc(db, 'inventory_movements', movId);
+          batch.set(movRef, {
+            id: movId,
+            itemType: 'product',
+            itemId: prod.id,
+            itemName: `${prod.name} (${prod.presentation})`,
+            movementType: 'salida_venta',
+            quantity: -delItem.quantity,
+            unit: 'unidades',
+            reference: `Orden Entrega ${delivery.deliveryNumber} - Factura ${order.invoiceNumber || 'Anticipada'} - ${order.customerName}`,
+            user: delivery.driverName || 'Depósito Fábrica',
+            date: new Date().toISOString()
+          });
+        }
+      });
+
+      // 2. Update line items delivered quantities
+      const updatedItems = order.items.map(it => {
+        const deliveredMatch = delivery.items.find(di => di.productId === it.productId);
+        const addedQty = deliveredMatch ? deliveredMatch.quantity : 0;
+        const totalDelivered = (it.deliveredQuantity || 0) + addedQty;
+        return {
+          ...it,
+          deliveredQuantity: totalDelivered
+        };
+      });
+
+      // 3. Compute overall delivery status
+      const totalOrderedQty = updatedItems.reduce((acc, it) => acc + it.quantity, 0);
+      const totalDeliveredQty = updatedItems.reduce((acc, it) => acc + (it.deliveredQuantity || 0), 0);
+
+      let deliveryStatus: 'pendiente_entrega' | 'entrega_parcial' | 'entrega_total' = 'pendiente_entrega';
+      let overallStatus = order.status;
+
+      if (totalDeliveredQty >= totalOrderedQty) {
+        deliveryStatus = 'entrega_total';
+        overallStatus = 'entregado';
+      } else if (totalDeliveredQty > 0) {
+        deliveryStatus = 'entrega_parcial';
+        overallStatus = 'entrega_parcial';
+      }
+
+      const existingDeliveries = order.deliveryOrders || [];
+      const updatedDeliveries = [...existingDeliveries, delivery];
+
+      // 4. Update sales order in Firestore
+      const orderRef = doc(db, 'sales_orders', orderId);
+      batch.update(orderRef, {
+        items: updatedItems,
+        deliveryStatus,
+        status: overallStatus,
+        deliveryOrders: updatedDeliveries,
+        remitoNumber: delivery.deliveryNumber
+      });
+
+      // Also record into root collection 'delivery_orders'
+      const delRef = doc(db, 'delivery_orders', delivery.id);
+      batch.set(delRef, delivery);
+
+      // 5. Automatic Notification for logistics & dispatch
+      const notifId = `notif-${Date.now()}`;
+      const notifRef = doc(db, 'notifications', notifId);
+      batch.set(notifRef, {
+        id: notifId,
+        title: `Mercadería Despachada (${delivery.deliveryNumber})`,
+        message: `Despacho de ${totalUnitsDeliveredNow} unidades para ${order.customerName}. Saldo restante: ${Math.max(0, totalOrderedQty - totalDeliveredQty)} unidades.`,
+        type: 'despacho_en_camino',
+        targetEntityId: orderId,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+        actionUrl: 'sales'
+      });
+
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'sales_orders');
     }
   };
 
@@ -847,11 +985,23 @@ export default function App() {
   const handleLogin = (user: AppUser) => {
     setCurrentUser(user);
     localStorage.setItem('colorear_current_user', JSON.stringify(user));
-    setActiveModule('desktop');
+    if (user.role === 'vendedor_calle') {
+      const matchSeller = sellers.find(s => 
+        (s.email && s.email.toLowerCase() === user.email.toLowerCase()) || 
+        s.name.toLowerCase().includes(user.name.toLowerCase())
+      );
+      if (matchSeller) {
+        setActiveSellerContext(matchSeller);
+      }
+      setIsMobileSellerAppOpen(true);
+    } else {
+      setActiveModule('desktop');
+    }
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setIsMobileSellerAppOpen(false);
     localStorage.removeItem('colorear_current_user');
   };
 
@@ -881,6 +1031,37 @@ export default function App() {
           <span>Conectando con base de datos en tiempo real Firestore...</span>
         </div>
       </div>
+    );
+  }
+
+  // Dedicated Mobile App for Street Traveling Salesmen (Preventistas / Vendedores de Calle)
+  if (isMobileSellerAppOpen) {
+    return (
+      <MobileSellerApp
+        sellers={sellers}
+        routeSheets={routeSheets}
+        customers={customers}
+        products={products}
+        salesOrders={salesOrders}
+        financialTransactions={financialTransactions}
+        config={companyConfig}
+        activeSellerContext={activeSellerContext}
+        onSetActiveSellerContext={setActiveSellerContext}
+        onCloseMobileApp={() => setIsMobileSellerAppOpen(false)}
+        onCreateSalesOrder={async (order) => {
+          await setDoc(doc(db, 'sales_orders', order.id), order);
+          const cust = customers.find(c => c.id === order.customerId);
+          if (cust && order.paymentStatus !== 'pagado') {
+            await updateDoc(doc(db, 'customers', cust.id), {
+              currentBalance: cust.currentBalance + order.total
+            });
+          }
+        }}
+        onRecordCustomerPayment={handleRecordCustomerPayment}
+        onSaveRouteSheet={async (sheet) => {
+          await setDoc(doc(db, 'route_sheets', sheet.id), sheet);
+        }}
+      />
     );
   }
 
@@ -918,6 +1099,7 @@ export default function App() {
         users={appUsers}
         onLogin={handleLogin}
         onOpenCustomerPortal={() => setActiveModule('customer_portal')}
+        onOpenMobileSellerApp={() => setIsMobileSellerAppOpen(true)}
       />
     );
   }
@@ -934,9 +1116,12 @@ export default function App() {
         config={companyConfig}
         portalClientTaxId={portalClientTaxId}
         currentUser={currentUser}
+        activeSellerContext={activeSellerContext}
+        onSetActiveSellerContext={setActiveSellerContext}
         onLogout={handleLogout}
         onExitPortal={handleLogoutClient}
         onOpenCustomerPortalModal={() => setActiveModule('customer_portal')}
+        onOpenMobileSellerApp={() => setIsMobileSellerAppOpen(true)}
       />
 
       {/* Main Container - Strict Independent Scrolling */}
@@ -949,6 +1134,7 @@ export default function App() {
           pendingDispatchCount={pendingDispatchCount}
           pendingPaymentCount={pendingPaymentCount}
           urgentChecksCount={urgentChecksCount}
+          allowedModules={activeSellerContext ? activeSellerContext.allowedModules : undefined}
         />
 
         {/* Content View (Independently scrollable, scrolling here does NOT move the sidebar) */}
@@ -966,6 +1152,7 @@ export default function App() {
               onOpenNewSalesModal={() => setActiveModule('sales')}
               onExportPriceListExcel={() => exportPriceListToExcel(products, companyConfig || undefined)}
               onNavigateToCustomer={(cust) => setActiveModule('customers')}
+              onOpenMobileSellerApp={() => setIsMobileSellerAppOpen(true)}
             />
           )}
 
@@ -1018,11 +1205,38 @@ export default function App() {
                 }
               }}
               onUpdateOrderStatus={handleUpdateOrderStatus}
+              onDeliverOrderItems={handleDeliverOrderItems}
               onRecordOrderPayment={async (orderId, amount) => {
                 await updateDoc(doc(db, 'sales_orders', orderId), {
                   paymentStatus: 'pagado',
                   paidAmount: amount
                 });
+              }}
+            />
+          )}
+
+          {activeModule === 'sellers' && (
+            <SellersModule
+              sellers={sellers}
+              routeSheets={routeSheets}
+              customers={customers}
+              salesOrders={salesOrders}
+              financialTransactions={financialTransactions}
+              config={companyConfig}
+              currentUser={currentUser}
+              activeSellerContext={activeSellerContext}
+              onSetActiveSellerContext={setActiveSellerContext}
+              onSaveSeller={async (seller) => {
+                await setDoc(doc(db, 'sellers', seller.id), seller);
+              }}
+              onDeleteSeller={async (sellerId) => {
+                await deleteDoc(doc(db, 'sellers', sellerId));
+              }}
+              onSaveRouteSheet={async (routeSheet) => {
+                await setDoc(doc(db, 'route_sheets', routeSheet.id), routeSheet);
+              }}
+              onDeleteRouteSheet={async (routeSheetId) => {
+                await deleteDoc(doc(db, 'route_sheets', routeSheetId));
               }}
             />
           )}
@@ -1041,17 +1255,41 @@ export default function App() {
               onDeleteProduct={async (id) => {
                 await deleteDoc(doc(db, 'products', id));
               }}
-              onBulkPriceUpdate={async (increasePct) => {
+              onBulkPriceUpdate={async (increasePct, target, category) => {
                 const batch = writeBatch(db);
-                products.forEach(p => {
-                  const factor = 1 + increasePct / 100;
+                const factor = 1 + increasePct / 100;
+
+                const targetProducts = category && category !== 'all'
+                  ? products.filter(p => p.category === category)
+                  : products;
+
+                targetProducts.forEach(p => {
                   const ref = doc(db, 'products', p.id);
-                  batch.update(ref, {
-                    priceDistributor: Math.round(p.priceDistributor * factor),
-                    priceWholesale: Math.round(p.priceWholesale * factor),
-                    priceRetail: Math.round(p.priceRetail * factor)
-                  });
+                  const updates: Partial<Product> = {};
+
+                  if (target === 'sale_only' || target === 'cost_and_sale') {
+                    updates.priceDistributor = Math.round(p.priceDistributor * factor);
+                    updates.priceWholesale = Math.round(p.priceWholesale * factor);
+                    updates.priceRetail = Math.round(p.priceRetail * factor);
+                  }
+
+                  if (target === 'cost_only' || target === 'cost_and_sale') {
+                    updates.unitCost = Math.round(p.unitCost * factor);
+                  }
+
+                  batch.update(ref, updates);
                 });
+
+                // If updating costs and all categories are targeted, also update raw materials
+                if ((target === 'cost_only' || target === 'cost_and_sale') && (!category || category === 'all')) {
+                  rawMaterials.forEach(m => {
+                    const mRef = doc(db, 'raw_materials', m.id);
+                    batch.update(mRef, {
+                      unitCost: Math.round(m.unitCost * factor)
+                    });
+                  });
+                }
+
                 await batch.commit();
               }}
               onSyncOfficialCatalog={syncOfficialAugust2026PriceList}
@@ -1088,6 +1326,10 @@ export default function App() {
               suppliers={suppliers}
               purchaseOrders={purchaseOrders}
               rawMaterials={rawMaterials}
+              financialTransactions={financialTransactions}
+              cashboxes={cashboxes}
+              checks={checks}
+              config={companyConfig}
               onSaveSupplier={async (sup) => {
                 await setDoc(doc(db, 'suppliers', sup.id), sup);
               }}
@@ -1095,6 +1337,7 @@ export default function App() {
                 await setDoc(doc(db, 'purchase_orders', po.id), po);
               }}
               onReceivePurchaseOrder={handleReceivePurchaseOrder}
+              onRecordSupplierPayment={handleRecordSupplierPayment}
             />
           )}
 

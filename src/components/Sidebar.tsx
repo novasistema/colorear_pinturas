@@ -21,7 +21,8 @@ import {
   ChevronRight,
   Search,
   Sparkles,
-  Layers
+  Layers,
+  MapPin
 } from 'lucide-react';
 import { ModuleKey } from '../types';
 
@@ -32,6 +33,7 @@ interface SidebarProps {
   pendingDispatchCount: number;
   pendingPaymentCount: number;
   urgentChecksCount?: number;
+  allowedModules?: ModuleKey[];
 }
 
 interface MenuItem {
@@ -58,7 +60,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   productionActiveCount,
   pendingDispatchCount,
   pendingPaymentCount,
-  urgentChecksCount = 0
+  urgentChecksCount = 0,
+  allowedModules
 }) => {
   const [searchFilter, setSearchFilter] = useState('');
   
@@ -151,6 +154,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badge: pendingDispatchCount > 0 ? `${pendingDispatchCount}` : null,
           badgeColor: 'bg-blue-900/60 text-blue-300 border border-blue-700/50',
           desc: 'Pedidos, remitos y facturación'
+        },
+        {
+          key: 'sellers',
+          label: 'Vendedores & Hoja de Ruta',
+          icon: MapPin,
+          badge: 'Calle/Visitas',
+          badgeColor: 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50',
+          desc: 'Rutas de calle, visitas y comisiones'
         },
         {
           key: 'customers',
@@ -262,24 +273,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   ], [productionActiveCount, pendingDispatchCount, pendingPaymentCount, urgentChecksCount]);
 
-  // Filter items if user types in search
+  // Filter items if user types in search or if role-based allowedModules is provided
   const filteredGroups = useMemo(() => {
-    if (!searchFilter.trim()) return groups;
-    const query = searchFilter.toLowerCase();
+    const query = searchFilter.toLowerCase().trim();
     return groups
       .map(group => {
-        const matchingItems = group.items.filter(item => 
-          item.label.toLowerCase().includes(query) ||
-          item.desc.toLowerCase().includes(query) ||
-          group.title.toLowerCase().includes(query)
-        );
+        // Step 1: Filter by RBAC allowedModules (if provided and non-empty)
+        const permittedItems = group.items.filter(item => {
+          if (allowedModules && allowedModules.length > 0) {
+            return allowedModules.includes(item.key);
+          }
+          return true;
+        });
+
+        // Step 2: Filter by text search query
+        const matchingItems = query
+          ? permittedItems.filter(item => 
+              item.label.toLowerCase().includes(query) ||
+              item.desc.toLowerCase().includes(query) ||
+              group.title.toLowerCase().includes(query)
+            )
+          : permittedItems;
+
         return {
           ...group,
           items: matchingItems
         };
       })
       .filter(group => group.items.length > 0);
-  }, [groups, searchFilter]);
+  }, [groups, searchFilter, allowedModules]);
 
   const expandAll = () => {
     setCollapsedGroups({

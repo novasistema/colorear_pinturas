@@ -51,7 +51,11 @@ interface PriceListModuleProps {
   config: CompanyConfig | null;
   onSaveProduct: (product: Product) => Promise<void>;
   onDeleteProduct: (productId: string) => Promise<void>;
-  onBulkPriceUpdate: (percentageIncrease: number) => Promise<void>;
+  onBulkPriceUpdate: (
+    percentageIncrease: number, 
+    target: 'cost_only' | 'cost_and_sale' | 'sale_only', 
+    category?: string
+  ) => Promise<void>;
   onSyncOfficialCatalog?: () => Promise<any>;
 }
 
@@ -78,6 +82,9 @@ export const PriceListModule: React.FC<PriceListModuleProps> = ({
   
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkPercentage, setBulkPercentage] = useState<number>(5);
+  const [bulkTarget, setBulkTarget] = useState<'cost_only' | 'cost_and_sale' | 'sale_only'>('cost_and_sale');
+  const [bulkCategory, setBulkCategory] = useState<string>('all');
+  const [isApplyingBulk, setIsApplyingBulk] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [importedSourceText, setImportedSourceText] = useState<string | null>(null);
@@ -258,8 +265,15 @@ export const PriceListModule: React.FC<PriceListModuleProps> = ({
 
   const handleBulkApply = async () => {
     if (bulkPercentage === 0) return;
-    await onBulkPriceUpdate(bulkPercentage);
-    setShowBulkModal(false);
+    setIsApplyingBulk(true);
+    try {
+      await onBulkPriceUpdate(bulkPercentage, bulkTarget, bulkCategory);
+      setShowBulkModal(false);
+    } catch (err) {
+      console.error('Error in bulk price update:', err);
+    } finally {
+      setIsApplyingBulk(false);
+    }
   };
 
   return (
@@ -905,60 +919,213 @@ export const PriceListModule: React.FC<PriceListModuleProps> = ({
         </div>
       )}
 
-      {/* MODAL: BULK PERCENTAGE ADJUSTMENT */}
+      {/* MODAL: BULK PERCENTAGE ADJUSTMENT (COSTO / VENTA / AMBOS) */}
       {showBulkModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200">
-            <h3 className="text-base font-black text-slate-900 mb-1">
-              Ajuste de Precios Masivo (%)
-            </h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Aplica un porcentaje de incremento o descuento general sobre todos los {products.length} productos del catálogo.
-            </p>
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-purple-50 text-purple-700">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Ajuste Masivo de Precios & Costos (%)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Actualización general porcentual para el catálogo de pinturas
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowBulkModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-            <div className="space-y-3">
+            <div className="space-y-4 mt-4">
+              {/* TARGET SELECTION: Venta Solo / Costo y Venta / Solo al Costo */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-2">
+                  ¿Qué valores deseas actualizar?
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBulkTarget('sale_only')}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      bulkTarget === 'sale_only'
+                        ? 'bg-purple-50 border-purple-500 ring-2 ring-purple-200 text-purple-900'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-extrabold text-xs block">Venta Solo</span>
+                      <Tag className="w-3.5 h-3.5 text-purple-600" />
+                    </div>
+                    <p className="text-[10px] leading-tight text-slate-500">
+                      Actualiza listas distribuidor, mayorista y minorista. El costo de fábrica no cambia.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBulkTarget('cost_and_sale')}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      bulkTarget === 'cost_and_sale'
+                        ? 'bg-blue-50 border-blue-500 ring-2 ring-blue-200 text-blue-900'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-extrabold text-xs block">Costo y Venta</span>
+                      <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    </div>
+                    <p className="text-[10px] leading-tight text-slate-500">
+                      Ajusta en paralelo el costo unitario de fabricación y todas las listas de venta.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBulkTarget('cost_only')}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      bulkTarget === 'cost_only'
+                        ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-200 text-emerald-900'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-extrabold text-xs block">Solo al Costo</span>
+                      <Factory className="w-3.5 h-3.5 text-emerald-600" />
+                    </div>
+                    <p className="text-[10px] leading-tight text-slate-500">
+                      Ajusta únicamente el costo de fabricación (unitCost). Los precios de venta quedan fijos.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* CATEGORY FILTER */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Porcentaje de Variación (+ o -)
+                  Alcance / Categoría de Productos
                 </label>
+                <select
+                  value={bulkCategory}
+                  onChange={e => setBulkCategory(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-medium bg-white"
+                >
+                  <option value="all">Todo el Catálogo Oficial ({products.length} productos)</option>
+                  {Array.from(new Set(products.map(p => p.category).filter(Boolean))).map(cat => (
+                    <option key={cat} value={cat}>
+                      Solo: {cat} ({products.filter(p => p.category === cat).length} productos)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* PERCENTAGE INPUT */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700 uppercase">
+                    Porcentaje de Variación (+ o -)
+                  </label>
+                  <span className="text-[11px] font-semibold text-slate-500">
+                    Factor multiplicador: x{(1 + bulkPercentage / 100).toFixed(4)}
+                  </span>
+                </div>
                 <div className="relative">
                   <input
                     type="number"
                     step="0.5"
                     value={bulkPercentage}
                     onChange={e => setBulkPercentage(Number(e.target.value))}
-                    className="w-full text-sm font-mono font-bold p-2.5 rounded-xl border border-slate-300 pr-8"
+                    className="w-full text-base font-mono font-bold p-2.5 rounded-xl border border-slate-300 pr-10 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    placeholder="Ej: 5 o -3"
                   />
-                  <span className="absolute right-3 top-2.5 font-bold text-slate-400">%</span>
+                  <span className="absolute right-3.5 top-2.5 font-bold text-slate-400">%</span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {[-5, 3, 5, 8, 10, 12, 15, 20].map(pct => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => setBulkPercentage(pct)}
+                      className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors ${
+                        bulkPercentage === pct
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {pct > 0 ? `+${pct}%` : `${pct}%`}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 pt-2">
-                {[3, 5, 8, 10, 15].map(pct => (
-                  <button
-                    key={pct}
-                    type="button"
-                    onClick={() => setBulkPercentage(pct)}
-                    className="flex-1 py-1 text-xs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
-                  >
-                    +{pct}%
-                  </button>
-                ))}
+              {/* PREVIEW SIMULATION BOX */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <span className="text-[11px] font-extrabold uppercase text-slate-500 tracking-wider block">
+                  Simulación de impacto (Ejemplos):
+                </span>
+                <div className="space-y-1.5 text-xs">
+                  {products.slice(0, 2).map(sample => {
+                    const factor = 1 + bulkPercentage / 100;
+                    const newCost = Math.round(sample.unitCost * factor);
+                    const newDist = Math.round(sample.priceDistributor * factor);
+
+                    return (
+                      <div key={sample.id} className="p-2 bg-white rounded-lg border border-slate-200/80 flex items-center justify-between text-xs">
+                        <div className="truncate max-w-[200px]">
+                          <strong className="text-slate-900 block truncate">{sample.name}</strong>
+                          <span className="text-[10px] font-mono text-slate-500">{sample.code} • {sample.presentation}</span>
+                        </div>
+                        <div className="text-right font-mono text-[11px]">
+                          {(bulkTarget === 'cost_only' || bulkTarget === 'cost_and_sale') && (
+                            <div>
+                              <span className="text-slate-400 line-through mr-1">${sample.unitCost.toLocaleString('es-AR')}</span>
+                              <strong className="text-emerald-700 font-bold">${newCost.toLocaleString('es-AR')} (Costo)</strong>
+                            </div>
+                          )}
+                          {(bulkTarget === 'sale_only' || bulkTarget === 'cost_and_sale') && (
+                            <div>
+                              <span className="text-slate-400 line-through mr-1">${sample.priceDistributor.toLocaleString('es-AR')}</span>
+                              <strong className="text-purple-700 font-bold">${newDist.toLocaleString('es-AR')} (Dist.)</strong>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 mt-6 pt-3 border-t border-slate-100">
               <button
+                type="button"
                 onClick={() => setShowBulkModal(false)}
                 className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
               >
                 Cancelar
               </button>
               <button
+                type="button"
                 onClick={handleBulkApply}
-                className="px-4 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-black rounded-xl"
+                disabled={isApplyingBulk || bulkPercentage === 0}
+                className="px-5 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-black disabled:opacity-50 rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
               >
-                Aplicar Ajuste a Catálogo
+                {isApplyingBulk ? (
+                  <span>Aplicando cambios...</span>
+                ) : (
+                  <span>
+                    Aplicar {bulkPercentage > 0 ? `+${bulkPercentage}%` : `${bulkPercentage}%`} ({bulkTarget === 'cost_only' ? 'Solo al Costo' : bulkTarget === 'sale_only' ? 'Venta Solo' : 'Costo y Venta'})
+                  </span>
+                )}
               </button>
             </div>
           </div>

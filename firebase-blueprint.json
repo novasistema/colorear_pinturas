@@ -270,6 +270,50 @@
         "paymentReminderTemplate": { "type": "string", "maxLength": 500 }
       },
       "required": ["id", "companyName", "cuit"]
+    },
+    "Seller": {
+      "title": "Street Sales Rep",
+      "description": "Street sales representatives and commercial field preventistas with sales and collection commission rates and RBAC module visibility",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "code": { "type": "string", "maxLength": 20 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string", "maxLength": 100 },
+        "zone": { "type": "string", "maxLength": 100 },
+        "dniOrTaxId": { "type": "string", "maxLength": 30 },
+        "salesCommissionPct": { "type": "number" },
+        "collectionCommissionPct": { "type": "number" },
+        "active": { "type": "boolean" },
+        "allowedModules": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "code", "salesCommissionPct", "collectionCommissionPct"]
+    },
+    "RouteSheet": {
+      "title": "Route Sheet",
+      "description": "Daily customer visit roadmap and check-in log for street sales reps",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string", "maxLength": 30 },
+        "sellerId": { "type": "string", "maxLength": 100 },
+        "sellerName": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string" },
+        "zone": { "type": "string", "maxLength": 100 },
+        "title": { "type": "string", "maxLength": 150 },
+        "status": { "type": "string", "enum": ["borrador", "en_progreso", "completada", "cancelada"] },
+        "stops": { "type": "array" },
+        "totalStops": { "type": "number" },
+        "visitedStops": { "type": "number" },
+        "totalSalesGenerated": { "type": "number" },
+        "totalCollectionsGenerated": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "code", "sellerId", "date", "status"]
     }
   },
   "firestore": {
@@ -328,6 +372,14 @@
     "/company_config/{configId}": {
       "schema": "CompanyConfig",
       "description": "Paint factory corporate and ARCA configuration"
+    },
+    "/sellers/{sellerId}": {
+      "schema": "Seller",
+      "description": "Street sales representatives with commission rates and module permissions"
+    },
+    "/route_sheets/{routeSheetId}": {
+      "schema": "RouteSheet",
+      "description": "Daily visit roadmaps and check-in records for street sales reps"
     }
   }
 }

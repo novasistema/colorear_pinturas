@@ -11,7 +11,8 @@ import {
   AlertCircle,
   Users,
   KeyRound,
-  ExternalLink
+  ExternalLink,
+  Compass
 } from 'lucide-react';
 import { AppUser } from '../types';
 
@@ -19,12 +20,14 @@ interface LoginScreenProps {
   users: AppUser[];
   onLogin: (user: AppUser) => void;
   onOpenCustomerPortal: () => void;
+  onOpenMobileSellerApp?: () => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   users,
   onLogin,
-  onOpenCustomerPortal
+  onOpenCustomerPortal,
+  onOpenMobileSellerApp
 }) => {
   const [emailOrUser, setEmailOrUser] = useState('');
   const [password, setPassword] = useState('');
@@ -292,6 +295,23 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Direct Access for Street Traveling Salesmen / Preventistas */}
+          {onOpenMobileSellerApp && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={onOpenMobileSellerApp}
+                className="w-full py-2.5 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-black flex items-center justify-center gap-2 shadow-md shadow-emerald-900/10 transition-all active:scale-[0.99] group"
+              >
+                <Compass className="w-4 h-4 text-emerald-200 group-hover:rotate-45 transition-transform" />
+                <span>📱 Acceso Preventistas (Vendedores de Calle)</span>
+                <span className="text-[10px] bg-white/20 text-white font-extrabold px-1.5 py-0.5 rounded-full">
+                  App Celular
+                </span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

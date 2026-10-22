@@ -23,7 +23,9 @@ import {
   Pin,
   Move,
   Database,
-  Receipt
+  Receipt,
+  Compass,
+  MapPin
 } from 'lucide-react';
 import { ModuleKey, ProductionOrder, SalesOrder, Customer, RawMaterial, Product } from '../types';
 import { DataDashboardWithBars } from './DataDashboardWithBars';
@@ -39,6 +41,7 @@ interface DesktopModuleProps {
   onOpenNewSalesModal: () => void;
   onExportPriceListExcel: () => void;
   onNavigateToCustomer?: (customer: Customer) => void;
+  onOpenMobileSellerApp?: () => void;
 }
 
 interface DesktopShortcut {
@@ -62,15 +65,17 @@ export const DesktopModule: React.FC<DesktopModuleProps> = ({
   onOpenNewProductionModal,
   onOpenNewSalesModal,
   onExportPriceListExcel,
-  onNavigateToCustomer
+  onNavigateToCustomer,
+  onOpenMobileSellerApp
 }) => {
   const [activeTab, setActiveTab] = useState<'shortcuts' | 'bars_dashboard'>('shortcuts');
 
   const defaultShortcuts: DesktopShortcut[] = [
     { id: 'production', name: 'Producción & Fórmulas', category: 'Fábrica', iconName: 'Factory', color: 'bg-red-600 text-white', pinned: true, order: 1, description: 'Lotes de pintura, materias primas y recetas' },
     { id: 'sales', name: 'Ventas, Remitos & Despacho', category: 'Comercial', iconName: 'ShoppingCart', color: 'bg-blue-600 text-white', pinned: true, order: 2, description: 'Pedidos, ARCA / no-ARCA y entrega' },
-    { id: 'prices', name: 'Lista de Precios (PDF/Excel)', category: 'Comercial', iconName: 'Tag', color: 'bg-emerald-600 text-white', pinned: true, order: 3, description: 'Mayorista, minorista y distribuidores' },
-    { id: 'customers', name: 'Cuentas Corrientes', category: 'Clientes', iconName: 'Users', color: 'bg-purple-600 text-white', pinned: true, order: 4, description: 'Saldos, cobranzas y recordatorios WhatsApp' },
+    { id: 'sellers', name: 'Vendedores & Hoja de Ruta', category: 'Comercial', iconName: 'Compass', color: 'bg-emerald-600 text-white', pinned: true, order: 3, description: 'Rutas de calle, visitas y comisiones' },
+    { id: 'prices', name: 'Lista de Precios (PDF/Excel)', category: 'Comercial', iconName: 'Tag', color: 'bg-emerald-600 text-white', pinned: true, order: 4, description: 'Mayorista, minorista y distribuidores' },
+    { id: 'customers', name: 'Cuentas Corrientes', category: 'Clientes', iconName: 'Users', color: 'bg-purple-600 text-white', pinned: true, order: 5, description: 'Saldos, cobranzas y recordatorios WhatsApp' },
     { id: 'finances', name: 'Saldos A Cobrar vs A Pagar', category: 'Cobranzas', iconName: 'Scale', color: 'bg-purple-700 text-white', pinned: true, order: 5, description: 'Avisos WhatsApp/Email a clientes y pagos' },
     { id: 'checks', name: 'Cartelera Cheques & E-Cheqs', category: 'Tesorería', iconName: 'CreditCard', color: 'bg-indigo-600 text-white', pinned: true, order: 6, description: 'Cartera, vencimientos y endosos' },
     { id: 'cashboxes', name: 'Cajas de Dinero & Cuentas', category: 'Tesorería', iconName: 'Wallet', color: 'bg-teal-600 text-white', pinned: true, order: 7, description: 'Gastos por categoría y transferencias' },
@@ -89,7 +94,21 @@ export const DesktopModule: React.FC<DesktopModuleProps> = ({
     const saved = localStorage.getItem('colorear_desktop_shortcuts');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (!parsed.some((s: DesktopShortcut) => s.id === 'sellers')) {
+          const sellerShortcut: DesktopShortcut = { 
+            id: 'sellers', 
+            name: 'Vendedores & Hoja de Ruta', 
+            category: 'Comercial', 
+            iconName: 'Compass', 
+            color: 'bg-emerald-600 text-white', 
+            pinned: true, 
+            order: 3, 
+            description: 'Rutas de calle, visitas y comisiones' 
+          };
+          return [...parsed, sellerShortcut];
+        }
+        return parsed;
       } catch (e) {
         return defaultShortcuts;
       }
@@ -155,6 +174,7 @@ export const DesktopModule: React.FC<DesktopModuleProps> = ({
       case 'BarChart3': return <BarChart3 className="w-6 h-6" />;
       case 'ShieldCheck': return <ShieldCheck className="w-6 h-6" />;
       case 'Settings': return <Settings className="w-6 h-6" />;
+      case 'Compass': return <Compass className="w-6 h-6" />;
       default: return <Sparkles className="w-6 h-6" />;
     }
   };
@@ -201,6 +221,22 @@ export const DesktopModule: React.FC<DesktopModuleProps> = ({
               <BarChart3 className="w-4 h-4" /> 
               {activeTab === 'bars_dashboard' ? 'Ver Accesos de Escritorio' : 'Ver Dashboard con Barras'}
             </button>
+            <button
+              onClick={() => setActiveModule('sellers')}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg transition-transform active:scale-95"
+            >
+              <Compass className="w-4 h-4" /> Hoja de Ruta & Vendedores
+            </button>
+            {onOpenMobileSellerApp && (
+              <button
+                onClick={onOpenMobileSellerApp}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-teal-600 to-emerald-700 hover:from-teal-700 hover:to-emerald-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg transition-transform active:scale-95 border border-emerald-400/40"
+                title="Abrir vista simplificada para teléfono celular de preventistas"
+              >
+                <Compass className="w-4 h-4 text-emerald-200" />
+                <span>📱 App Móvil Celular</span>
+              </button>
+            )}
             <button
               onClick={onOpenNewProductionModal}
               className="flex items-center gap-2 bg-[#d31627] hover:bg-red-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg transition-transform active:scale-95"

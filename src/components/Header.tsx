@@ -13,9 +13,10 @@ import {
   ExternalLink,
   X,
   LogOut,
-  Users
+  Users,
+  Compass
 } from 'lucide-react';
-import { NotificationItem, ModuleKey, CompanyConfig, AppUser } from '../types';
+import { NotificationItem, ModuleKey, CompanyConfig, AppUser, Seller } from '../types';
 
 interface HeaderProps {
   activeModule: ModuleKey;
@@ -26,9 +27,12 @@ interface HeaderProps {
   config: CompanyConfig | null;
   portalClientTaxId: string | null;
   currentUser: AppUser | null;
+  activeSellerContext?: Seller | null;
+  onSetActiveSellerContext?: (seller: Seller | null) => void;
   onLogout: () => void;
   onExitPortal: () => void;
   onOpenCustomerPortalModal: () => void;
+  onOpenMobileSellerApp?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -40,9 +44,12 @@ export const Header: React.FC<HeaderProps> = ({
   config,
   portalClientTaxId,
   currentUser,
+  activeSellerContext,
+  onSetActiveSellerContext,
   onLogout,
   onExitPortal,
-  onOpenCustomerPortalModal
+  onOpenCustomerPortalModal,
+  onOpenMobileSellerApp
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const unreadCount = notifications.filter(n => !n.isRead).length;
@@ -110,6 +117,41 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden sm:inline">Portal Clientes</span>
               <span className="text-[10px] text-slate-500">(DNI/CUIT)</span>
             </button>
+          )}
+
+          {/* Quick Access to Mobile Seller App */}
+          {onOpenMobileSellerApp && (
+            <button
+              onClick={onOpenMobileSellerApp}
+              className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 transition-colors shadow-2xs group"
+              title="Abrir App Móvil para Vendedores y Preventistas de Calle"
+            >
+              <Compass className="w-4 h-4 text-emerald-600 group-hover:rotate-45 transition-transform" />
+              <span>App Vendedores</span>
+              <span className="text-[10px] bg-emerald-600 text-white font-extrabold px-1.5 py-0.2 rounded-full hidden sm:inline">
+                Móvil
+              </span>
+            </button>
+          )}
+
+          {/* Active Seller View Indicator */}
+          {activeSellerContext && (
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-300 px-3 py-1 rounded-xl shadow-2xs">
+              <Compass className="w-4 h-4 text-emerald-700" />
+              <div className="text-xs">
+                <span className="text-[10px] uppercase font-bold text-emerald-800 block leading-none">Modo Preventista:</span>
+                <strong className="text-slate-900 font-bold">{activeSellerContext.name}</strong>
+              </div>
+              {onSetActiveSellerContext && (
+                <button
+                  onClick={() => onSetActiveSellerContext(null)}
+                  className="ml-1 text-[11px] font-bold text-slate-700 hover:text-black bg-white hover:bg-slate-100 border border-slate-300 px-2 py-0.5 rounded-lg shadow-2xs"
+                  title="Restaurar vista de Administrador con acceso completo a todos los módulos"
+                >
+                  Restaurar Admin
+                </button>
+              )}
+            </div>
           )}
 
           {/* Notifications Dropdown */}

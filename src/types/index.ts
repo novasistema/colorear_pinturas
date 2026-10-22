@@ -111,6 +111,8 @@ export interface Customer {
   priceList: PriceListType;
   creditLimit: number;
   currentBalance: number; // Positive = owes money, Negative = credit in favor
+  sellerId?: string;
+  sellerName?: string;
   status: 'activo' | 'suspendido' | 'bloqueado';
 }
 
@@ -119,7 +121,8 @@ export interface SalesOrderItem {
   productName: string;
   code: string;
   presentation: string;
-  quantity: number;
+  quantity: number; // Cantidad facturada en la orden
+  deliveredQuantity?: number; // Cantidad ya entregada físicamente
   unitPrice: number;
   discount: number;
   subtotal: number;
@@ -129,12 +132,40 @@ export type SalesOrderStatus =
   | 'ingresado' 
   | 'preparando_remito' 
   | 'facturado' 
+  | 'entrega_parcial'
   | 'despachado' 
   | 'entregado' 
   | 'cancelado';
 
 export type BillingType = 'arca' | 'no_arca';
 export type InvoiceType = 'FACTURA_A' | 'FACTURA_B' | 'FACTURA_C' | 'RECIBO_X_NO_ARCA';
+
+export interface DeliveryOrderItem {
+  productId: string;
+  productName: string;
+  code: string;
+  presentation: string;
+  quantity: number; // Cantidad entregada en esta remesa
+}
+
+export interface DeliveryOrder {
+  id: string;
+  deliveryNumber: string; // Ej: OE-2026-0045 o REM-0001-00001920
+  salesOrderId: string;
+  salesOrderNumber: string;
+  customerId: string;
+  customerName: string;
+  customerAddress?: string;
+  date: string;
+  items: DeliveryOrderItem[];
+  transportName?: string;
+  driverName?: string;
+  driverDniOrPlate?: string;
+  receiverName?: string;
+  receiverDni?: string;
+  notes?: string;
+  createdAt: string;
+}
 
 export interface SalesOrder {
   id: string;
@@ -149,6 +180,10 @@ export interface SalesOrder {
   invoiceType?: InvoiceType;
   date: string;
   status: SalesOrderStatus;
+  deliveryStatus?: 'pendiente_entrega' | 'entrega_parcial' | 'entrega_total';
+  deliveryOrders?: DeliveryOrder[];
+  sellerId?: string;
+  sellerName?: string;
   paymentStatus: 'pendiente' | 'parcial' | 'pagado';
   transportId?: string;
   transportName?: string;
@@ -204,6 +239,13 @@ export interface Supplier {
   phone: string;
   category: string;
   paymentTerms: string;
+  address?: string;
+  discountPercentage?: number; // % de descuento acordado que el proveedor nos otorga
+  discountConcept?: string; // Concepto o condición del descuento (ej: Pronto pago, Volumen)
+  currentBalance?: number; // Saldo adeudado al proveedor
+  cbuOrAlias?: string;
+  bankName?: string;
+  notes?: string;
 }
 
 export interface PurchaseOrderItem {
@@ -222,6 +264,9 @@ export interface PurchaseOrder {
   date: string;
   items: PurchaseOrderItem[];
   status: 'solicitado' | 'aprobado' | 'recibido' | 'cancelado';
+  subtotalBeforeDiscount?: number;
+  discountPercentage?: number;
+  discountAmount?: number;
   total: number;
   notes?: string;
 }
@@ -272,6 +317,7 @@ export type ModuleKey =
   | 'desktop'
   | 'production'
   | 'sales'
+  | 'sellers'
   | 'prices'
   | 'customers'
   | 'checks'
@@ -428,7 +474,7 @@ export interface SalaryPayment {
   createdAt: string;
 }
 
-export type UserRole = 'admin' | 'produccion' | 'ventas' | 'logistica' | 'finanzas';
+export type UserRole = 'admin' | 'produccion' | 'ventas' | 'vendedor_calle' | 'logistica' | 'finanzas';
 
 export interface AppUser {
   id: string;
@@ -440,6 +486,95 @@ export interface AppUser {
   avatarColor?: string;
   active: boolean;
   phone?: string;
+  sellerId?: string; // Si está vinculado a un vendedor de calle
+  allowedModules?: ModuleKey[]; // Módulos permitidos asignados desde administración
   lastLogin?: string;
   createdAt: string;
 }
+
+// --- VENDEDORES DE CALLE & COMISIONES ---
+export interface Seller {
+  id: string;
+  name: string;
+  code: string; // ej: VEN-01
+  phone: string;
+  email: string;
+  zone: string; // ej: "GBA Norte", "CABA", "Zona Oeste", etc.
+  dniOrTaxId?: string;
+  salesCommissionPct: number; // e.g. 3.5 (%) Comisión por venta
+  collectionCommissionPct: number; // e.g. 1.5 (%) Comisión por cobranza
+  active: boolean;
+  allowedModules: ModuleKey[]; // Módulos permitidos asignados desde administración
+  notes?: string;
+  createdAt: string;
+}
+
+// --- HOJA DE RUTA & PARADAS DE VISITA ---
+export type VisitStatus = 
+  | 'pendiente' 
+  | 'visitado_con_venta' 
+  | 'visitado_sin_venta' 
+  | 'visitado_cobranza' 
+  | 'no_encontrado_ausente' 
+  | 'reprogramado';
+
+export interface RouteSheetStop {
+  id: string;
+  orderIndex: number;
+  customerId: string;
+  customerName: string;
+  customerAddress: string;
+  customerPhone?: string;
+  customerCity?: string;
+  currentBalance?: number; // Saldo deudor en cuenta corriente para gestión de cobro
+  estimatedTime?: string; // ej: "09:30" o "Mañana"
+  status: VisitStatus;
+  checkInTime?: string; // Hora en que el vendedor registró la visita
+  notes?: string; // Observaciones del vendedor en la visita
+  salesOrderId?: string; // Si se concretó una venta
+  salesAmount?: number; // Monto vendido en la parada
+  collectedAmount?: number; // Monto cobrado en la parada
+  receiptNumber?: string; // Comprobante o cheque recibido
+}
+
+export interface RouteSheet {
+  id: string;
+  code: string; // ej: HDR-2026-001
+  sellerId: string;
+  sellerName: string;
+  date: string; // YYYY-MM-DD
+  zone: string;
+  title: string; // ej: "Ruta San Martín - Circuito Pinturerías"
+  status: 'borrador' | 'en_progreso' | 'completada' | 'cancelada';
+  stops: RouteSheetStop[];
+  totalStops: number;
+  visitedStops: number;
+  totalSalesGenerated: number;
+  totalCollectionsGenerated: number;
+  notes?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+// --- LIQUIDACIÓN DE COMISIONES ---
+export interface SellerCommissionSettlement {
+  id: string;
+  settlementNumber: string; // ej: LIQ-VEN-2026-001
+  sellerId: string;
+  sellerName: string;
+  period: string; // ej: "Octubre 2026"
+  date: string;
+  totalSales: number;
+  salesCommissionPct: number;
+  salesCommissionAmount: number;
+  totalCollections: number;
+  collectionCommissionPct: number;
+  collectionCommissionAmount: number;
+  totalCommissionToPay: number;
+  status: 'pendiente' | 'pagada';
+  paidDate?: string;
+  cashboxId?: string;
+  notes?: string;
+  createdAt: string;
+}
+
