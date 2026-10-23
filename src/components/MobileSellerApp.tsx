@@ -30,7 +30,9 @@ import {
   RefreshCw,
   Share2,
   FileText,
-  BadgePercent
+  BadgePercent,
+  ShieldCheck,
+  Crosshair
 } from 'lucide-react';
 import { 
   Customer, 
@@ -42,7 +44,8 @@ import {
   Seller, 
   CompanyConfig, 
   FinancialTransaction,
-  VisitStatus
+  VisitStatus,
+  PriceListType
 } from '../types';
 
 interface MobileSellerAppProps {
@@ -60,7 +63,7 @@ interface MobileSellerAppProps {
   onRecordCustomerPayment: (
     customerId: string, 
     amount: number, 
-    method: 'efectivo' | 'transferencia' | 'cheque' | 'tarjeta', 
+    method: 'efectivo' | 'transferencia' | 'cheque' | 'echeq', 
     concept: string, 
     receiptNumber?: string, 
     bankInfo?: string, 
@@ -128,16 +131,83 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
   // --- RECORD PAYMENT MODAL ---
   const [paymentCustomer, setPaymentCustomer] = useState<Customer | null>(null);
   const [paymentAmount, setPaymentAmount] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'cheque' | 'tarjeta'>('efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<'efectivo' | 'transferencia' | 'cheque' | 'echeq'>('efectivo');
   const [paymentReceiptNumber, setPaymentReceiptNumber] = useState<string>('');
   const [paymentNotes, setPaymentNotes] = useState<string>('');
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string | null>(null);
 
-  // --- VISIT CHECK-IN MODAL ---
+  // --- VISIT CHECK-IN MODAL & GEOTAGGING GPS ---
   const [visitingStop, setVisitingStop] = useState<{ stop: RouteSheetStop; sheetId: string } | null>(null);
-  const [visitStatus, setVisitStatus] = useState<VisitStatus>('visitado');
+  const [visitStatus, setVisitStatus] = useState<VisitStatus>('visitado_con_venta');
   const [visitNotes, setVisitNotes] = useState('');
+  const [gpsState, setGpsState] = useState<{
+    lat: number;
+    lng: number;
+    accuracy: number;
+    timestamp: string;
+    status: 'idle' | 'capturing' | 'success' | 'denied' | 'error';
+    errorMsg?: string;
+  }>({
+    lat: 0,
+    lng: 0,
+    accuracy: 0,
+    timestamp: '',
+    status: 'idle'
+  });
+
+  // Request high-accuracy GPS coordinates for managerial validation
+  const requestGpsLocation = () => {
+    if (!navigator.geolocation) {
+      setGpsState({
+        lat: 0,
+        lng: 0,
+        accuracy: 0,
+        timestamp: new Date().toISOString(),
+        status: 'error',
+        errorMsg: 'Geolocalización GPS no soportada en este dispositivo.'
+      });
+      return;
+    }
+
+    setGpsState(prev => ({
+      ...prev,
+      status: 'capturing',
+      errorMsg: undefined
+    }));
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsState({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: new Date().toISOString(),
+          status: 'success'
+        });
+      },
+      (err) => {
+        let msg = 'No se pudo obtener señal satelital.';
+        if (err.code === err.PERMISSION_DENIED) {
+          msg = 'Permiso de ubicación GPS denegado por el usuario o navegador.';
+        } else if (err.code === err.TIMEOUT) {
+          msg = 'Tiempo de espera de antena GPS agotado.';
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          msg = 'Señal satelital no disponible en esta zona.';
+        }
+        setGpsState(prev => ({
+          ...prev,
+          status: err.code === err.PERMISSION_DENIED ? 'denied' : 'error',
+          errorMsg: msg
+        }));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 15000
+      }
+    );
+  };
 
   // --- BALANCES SEARCH ---
   const [balanceSearchTerm, setBalanceSearchTerm] = useState('');
@@ -157,7 +227,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
 
   // Helper: Get product price based on selected customer's price tier
   const getProductPrice = (prod: Product, cust?: Customer | null) => {
-    const tier = cust?.priceTier || 'mayorista';
+    const tier: PriceListType = cust?.priceList || 'mayorista';
     if (tier === 'distribuidor') return prod.priceDistributor || prod.priceWholesale;
     if (tier === 'minorista') return prod.priceRetail || prod.priceWholesale;
     return prod.priceWholesale;
@@ -239,12 +309,13 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
       const items: SalesOrderItem[] = cartItemsArray.map(it => ({
         productId: it.product.id,
         productName: it.product.name,
-        packagingPresentation: it.product.packagingPresentation,
+        code: it.product.code,
+        presentation: it.product.presentation,
         unitPrice: it.unitPrice,
+        discount: 0,
         quantity: it.quantity,
-        subtotal: it.subtotal,
         deliveredQuantity: 0,
-        pendingQuantity: it.quantity
+        subtotal: it.subtotal
       }));
 
       const newOrder: SalesOrder = {
@@ -252,17 +323,22 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
         orderNumber,
         customerId: orderCustomer.id,
         customerName: orderCustomer.businessName,
+        customerTaxId: orderCustomer.taxId,
         customerAddress: `${orderCustomer.address}, ${orderCustomer.city || ''}`,
+        customerPhone: orderCustomer.phone,
+        customerEmail: orderCustomer.email,
+        billingType: 'no_arca',
         date: now,
-        promisedDeliveryDate: deliveryDate,
-        items,
-        total: cartTotalAmount,
-        status: 'orden_anticipada', // Invoicing order workflow, ready for delivery order
+        status: 'ingresado', // Enters factory queue, ready for dispatch
+        deliveryStatus: 'pendiente_entrega',
         paymentStatus: 'pendiente',
-        notes: `[Tomado en Calle por ${currentSeller?.name || 'Preventista'}] ${orderNotes ? '- ' + orderNotes : ''}`,
+        items,
+        subtotal: cartTotalAmount,
+        taxAmount: 0,
+        total: cartTotalAmount,
+        notes: `[Tomado en Calle por ${currentSeller?.name || 'Preventista'}] ${orderNotes ? '- ' + orderNotes : ''} (Fecha entrega sugerida: ${deliveryDate})`,
         sellerId: currentSeller?.id,
-        sellerName: currentSeller?.name,
-        commissionPaid: false
+        sellerName: currentSeller?.name
       };
 
       await onCreateSalesOrder(newOrder);
@@ -271,14 +347,21 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
       if (activeRouteSheet) {
         const stopIndex = activeRouteSheet.stops.findIndex(s => s.customerId === orderCustomer.id);
         if (stopIndex >= 0) {
+          const hasGps = gpsState.status === 'success' && gpsState.lat !== 0;
           const updatedStops = [...activeRouteSheet.stops];
           updatedStops[stopIndex] = {
             ...updatedStops[stopIndex],
-            status: 'pedido_tomado',
+            status: 'visitado_con_venta',
             notes: `Pedido #${orderNumber} tomado por ${formatMoney(cartTotalAmount)}`,
-            visitedAt: now,
-            orderId: newOrder.id,
-            orderTotal: cartTotalAmount
+            checkInTime: now,
+            salesOrderId: newOrder.id,
+            salesAmount: cartTotalAmount,
+            latitude: hasGps ? gpsState.lat : updatedStops[stopIndex].latitude,
+            longitude: hasGps ? gpsState.lng : updatedStops[stopIndex].longitude,
+            accuracyMeters: hasGps ? Math.round(gpsState.accuracy * 10) / 10 : updatedStops[stopIndex].accuracyMeters,
+            geotaggedAt: hasGps ? gpsState.timestamp : (updatedStops[stopIndex].geotaggedAt || now),
+            geotagStatus: hasGps ? 'verificado_gps' : (updatedStops[stopIndex].geotagStatus || 'sin_gps_manual'),
+            deviceInfo: `App Móvil Preventista (${currentSeller?.name || 'Vendedor en Calle'})`
           };
           await onSaveRouteSheet({
             ...activeRouteSheet,
@@ -323,6 +406,25 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
         `Cobrado por: ${currentSeller?.name || 'Vendedor'} | Notas: ${paymentNotes}`
       );
 
+      // If customer is in active route sheet, record collectedAmount
+      if (activeRouteSheet) {
+        const stopIndex = activeRouteSheet.stops.findIndex(s => s.customerId === paymentCustomer.id);
+        if (stopIndex >= 0) {
+          const updatedStops = [...activeRouteSheet.stops];
+          updatedStops[stopIndex] = {
+            ...updatedStops[stopIndex],
+            status: 'visitado_cobranza',
+            collectedAmount: (updatedStops[stopIndex].collectedAmount || 0) + amountNum,
+            receiptNumber: receiptNo,
+            checkInTime: new Date().toISOString()
+          };
+          await onSaveRouteSheet({
+            ...activeRouteSheet,
+            stops: updatedStops
+          });
+        }
+      }
+
       setPaymentSuccessMsg(`¡Cobro de ${formatMoney(amountNum)} registrado con éxito! Recibo: ${receiptNo}`);
       setTimeout(() => {
         setPaymentSuccessMsg(null);
@@ -338,18 +440,29 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
     }
   };
 
-  // Submit Visit Check-in
+  // Submit Visit Check-in with Geotagging GPS
   const handleSubmitVisit = async () => {
     if (!visitingStop || !activeRouteSheet) return;
 
     try {
+      const nowIso = new Date().toISOString();
+      const hasGps = gpsState.status === 'success' && gpsState.lat !== 0;
+
       const updatedStops = activeRouteSheet.stops.map(st => {
         if (st.id === visitingStop.stop.id) {
           return {
             ...st,
             status: visitStatus,
-            visitedAt: new Date().toISOString(),
-            notes: visitNotes || st.notes
+            checkInTime: nowIso,
+            notes: visitNotes || st.notes,
+            latitude: hasGps ? gpsState.lat : (st.latitude || undefined),
+            longitude: hasGps ? gpsState.lng : (st.longitude || undefined),
+            accuracyMeters: hasGps ? Math.round(gpsState.accuracy * 10) / 10 : (st.accuracyMeters || undefined),
+            geotaggedAt: hasGps ? gpsState.timestamp : (st.geotaggedAt || nowIso),
+            geotagStatus: hasGps 
+              ? 'verificado_gps' 
+              : (gpsState.status === 'denied' ? 'permiso_denegado' : (st.geotagStatus || 'sin_gps_manual')),
+            deviceInfo: `App Móvil Preventista (${currentSeller?.name || 'Vendedor en Calle'})`
           };
         }
         return st;
@@ -375,7 +488,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
       const matchSearch = !term || 
         p.name.toLowerCase().includes(term) || 
         p.category.toLowerCase().includes(term) ||
-        (p.sku && p.sku.toLowerCase().includes(term));
+        (p.code && p.code.toLowerCase().includes(term));
       return matchCat && matchSearch;
     });
   }, [products, orderCategoryFilter, productSearchTerm]);
@@ -395,7 +508,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
     if (!term) return customers.slice(0, 10);
     return customers.filter(c => 
       c.businessName.toLowerCase().includes(term) ||
-      (c.fantasyName && c.fantasyName.toLowerCase().includes(term)) ||
+      (c.tradeName && c.tradeName.toLowerCase().includes(term)) ||
       (c.taxId && c.taxId.includes(term)) ||
       (c.city && c.city.toLowerCase().includes(term))
     );
@@ -419,8 +532,8 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
   const routeStats = useMemo(() => {
     if (!activeRouteSheet) return { total: 0, visited: 0, pending: 0, withOrders: 0 };
     const total = activeRouteSheet.stops.length;
-    const visited = activeRouteSheet.stops.filter(s => s.status === 'visitado' || s.status === 'pedido_tomado').length;
-    const withOrders = activeRouteSheet.stops.filter(s => s.status === 'pedido_tomado').length;
+    const visited = activeRouteSheet.stops.filter(s => s.status !== 'pendiente').length;
+    const withOrders = activeRouteSheet.stops.filter(s => s.status === 'visitado_con_venta').length;
     return {
       total,
       visited,
@@ -480,7 +593,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
             <div className="flex items-center gap-1 text-slate-600 truncate">
               <Compass className="w-3.5 h-3.5 text-[#d31627] shrink-0" />
               <span className="font-semibold truncate">
-                Zona: {currentSeller?.assignedZones?.join(', ') || 'Todas las Zonas'}
+                Zona: {currentSeller?.zone || 'Todas las Zonas'}
               </span>
             </div>
 
@@ -596,8 +709,8 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                 ) : (
                   activeRouteSheet.stops.map((stop, idx) => {
                     const cust = customers.find(c => c.id === stop.customerId);
-                    const debt = cust?.currentBalance || 0;
-                    const isVisited = stop.status === 'visitado' || stop.status === 'pedido_tomado';
+                    const debt = cust?.currentBalance || stop.currentBalance || 0;
+                    const isVisited = stop.status !== 'pendiente';
 
                     return (
                       <div 
@@ -614,7 +727,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                                 ? 'bg-emerald-600 text-white' 
                                 : 'bg-slate-900 text-white'
                             }`}>
-                              {stop.orderNumber || idx + 1}
+                              {stop.orderIndex || idx + 1}
                             </div>
                             <div className="min-w-0">
                               <h4 className="text-sm font-black text-slate-900 leading-snug truncate">
@@ -622,12 +735,12 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                               </h4>
                               <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                                 <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
-                                <span className="truncate">{stop.address}, {stop.city}</span>
+                                <span className="truncate">{stop.customerAddress || cust?.address || 'Dirección'}, {stop.customerCity || cust?.city || ''}</span>
                               </p>
-                              {stop.contactPhone && (
+                              {(stop.customerPhone || cust?.phone) && (
                                 <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                                   <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                                  <span>{stop.contactPhone}</span>
+                                  <span>{stop.customerPhone || cust?.phone}</span>
                                 </p>
                               )}
                             </div>
@@ -635,15 +748,17 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
 
                           {/* Status Badge */}
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                            stop.status === 'pedido_tomado' ? 'bg-purple-100 text-purple-800' :
-                            stop.status === 'visitado' ? 'bg-emerald-100 text-emerald-800' :
-                            stop.status === 'ausente' ? 'bg-red-100 text-red-800' :
+                            stop.status === 'visitado_con_venta' ? 'bg-purple-100 text-purple-800' :
+                            stop.status === 'visitado_cobranza' ? 'bg-teal-100 text-teal-800' :
+                            stop.status === 'visitado_sin_venta' ? 'bg-emerald-100 text-emerald-800' :
+                            stop.status === 'no_encontrado_ausente' ? 'bg-red-100 text-red-800' :
                             stop.status === 'reprogramado' ? 'bg-amber-100 text-amber-800' :
                             'bg-slate-100 text-slate-600'
                           }`}>
-                            {stop.status === 'pedido_tomado' ? '🛒 Pedido' :
-                             stop.status === 'visitado' ? '✓ Visitado' :
-                             stop.status === 'ausente' ? '✗ Ausente' :
+                            {stop.status === 'visitado_con_venta' ? '🛒 Venta' :
+                             stop.status === 'visitado_cobranza' ? '💵 Cobro' :
+                             stop.status === 'visitado_sin_venta' ? '✓ Visitado' :
+                             stop.status === 'no_encontrado_ausente' ? '✗ Ausente' :
                              stop.status === 'reprogramado' ? '↻ Reprog' : 'Pendiente'}
                           </span>
                         </div>
@@ -656,11 +771,49 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                           </span>
                         </div>
 
+                        {/* Geotagging GPS badge if visited */}
+                        {isVisited && (
+                          <div className="mt-2 pt-2 border-t border-slate-100">
+                            {stop.latitude && stop.longitude ? (
+                              <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-xs text-emerald-900">
+                                <div className="flex items-center gap-1.5">
+                                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                                  <div>
+                                    <div className="text-[11px] font-black flex items-center gap-1">
+                                      <span>GPS Verificado</span>
+                                      <span className="text-[9px] bg-emerald-200 text-emerald-900 px-1 py-0.2 rounded font-mono font-bold">
+                                        ±{stop.accuracyMeters ? Math.round(stop.accuracyMeters) : 10}m
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] font-mono text-emerald-700">
+                                      {stop.latitude.toFixed(4)}, {stop.longitude.toFixed(4)}
+                                    </div>
+                                  </div>
+                                </div>
+                                <a
+                                  href={`https://www.google.com/maps?q=${stop.latitude},${stop.longitude}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] font-bold text-emerald-800 underline flex items-center gap-0.5"
+                                >
+                                  <span>Mapa</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              </div>
+                            ) : (
+                              <div className="p-1.5 rounded-lg bg-amber-50 border border-amber-200 flex items-center gap-1.5 text-[10px] text-amber-800">
+                                <AlertCircle className="w-3 h-3 text-amber-600 shrink-0" />
+                                <span>Visita registrada manualmente (Sin coordenadas GPS)</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Action Buttons: GPS, Call, WhatsApp, Order, Check-in */}
                         <div className="mt-3 pt-2 border-t border-slate-100 grid grid-cols-4 gap-1.5">
                           {/* GPS Navigation */}
                           <a
-                            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${stop.address}, ${stop.city || ''}, Argentina`)}`}
+                            href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${stop.customerAddress || cust?.address || ''}, ${stop.customerCity || cust?.city || ''}, Argentina`)}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex flex-col items-center justify-center p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors"
@@ -672,7 +825,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
 
                           {/* Call */}
                           <a
-                            href={`tel:${stop.contactPhone || cust?.phone || ''}`}
+                            href={`tel:${stop.customerPhone || cust?.phone || ''}`}
                             className="flex flex-col items-center justify-center p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
                             title="Llamar al cliente"
                           >
@@ -682,7 +835,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
 
                           {/* WhatsApp */}
                           <a
-                            href={`https://wa.me/${(stop.contactPhone || cust?.phone || '').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hola ${stop.customerName}, soy ${currentSeller?.name || 'el vendedor'} de Colorear Pinturas. Estoy en camino para visitarte.`)}`}
+                            href={`https://wa.me/${(stop.customerPhone || cust?.phone || '').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hola ${stop.customerName}, soy ${currentSeller?.name || 'el preventista'} de Colorear Pinturas. Estoy en camino para visitarte.`)}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex flex-col items-center justify-center p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 transition-colors"
@@ -692,15 +845,16 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                             <span className="text-[10px] font-bold">WhatsApp</span>
                           </a>
 
-                          {/* Visit Check-in */}
+                          {/* Visit Check-in with GPS Geotagging */}
                           <button
                             onClick={() => {
                               setVisitingStop({ stop, sheetId: activeRouteSheet.id });
-                              setVisitStatus(stop.status || 'visitado');
+                              setVisitStatus(stop.status !== 'pendiente' ? stop.status : 'visitado_sin_venta');
                               setVisitNotes(stop.notes || '');
+                              requestGpsLocation();
                             }}
                             className="flex flex-col items-center justify-center p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
-                            title="Registrar visita"
+                            title="Registrar estado de visita con Geotagging GPS"
                           >
                             <CheckCircle2 className="w-4 h-4 mb-0.5 text-slate-600" />
                             <span className="text-[10px] font-bold">Estado</span>
@@ -748,7 +902,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                         <span className="font-mono">{orderCustomer.taxId}</span>
                         <span>•</span>
                         <span className="font-bold uppercase text-[#d31627]">
-                          Lista {orderCustomer.priceTier || 'Mayorista'}
+                          Lista {orderCustomer.priceList || 'Mayorista'}
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-500 truncate mt-0.5">
@@ -794,7 +948,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                               <div className="text-[10px] text-slate-500">{c.taxId} • {c.city || 'Bs As'}</div>
                             </div>
                             <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded shrink-0">
-                              {c.priceTier || 'Mayorista'}
+                              {c.priceList || 'Mayorista'}
                             </span>
                           </button>
                         ))
@@ -872,22 +1026,22 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                               </h4>
                               <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
                                 <span className="font-bold text-slate-700 bg-slate-200/70 px-1.5 py-0.2 rounded text-[10px]">
-                                  {prod.packagingPresentation || 'Unidad'}
+                                  {prod.presentation || 'Unidad'}
                                 </span>
                                 <span>•</span>
                                 <span className="font-extrabold text-[#d31627]">
                                   {formatMoney(unitPrice)}
                                 </span>
-                                {prod.sku && <span className="text-[10px] text-slate-400 font-mono">({prod.sku})</span>}
+                                {prod.code && <span className="text-[10px] text-slate-400 font-mono">({prod.code})</span>}
                               </div>
                             </div>
 
                             {/* Stock Indicator */}
                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                              prod.currentStock > 10 ? 'bg-emerald-100 text-emerald-800' :
-                              prod.currentStock > 0 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
+                              prod.stock > 10 ? 'bg-emerald-100 text-emerald-800' :
+                              prod.stock > 0 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
                             }`}>
-                              Stock: {prod.currentStock}
+                              Stock: {prod.stock}
                             </span>
                           </div>
 
@@ -1183,7 +1337,7 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                     const term = catalogSearchTerm.toLowerCase();
                     const matchSearch = !term || 
                       p.name.toLowerCase().includes(term) || 
-                      (p.sku && p.sku.toLowerCase().includes(term));
+                      (p.code && p.code.toLowerCase().includes(term));
                     return matchCat && matchSearch;
                   })
                   .map(prod => (
@@ -1195,17 +1349,17 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                           </h4>
                           <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">
                             <span className="font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
-                              {prod.packagingPresentation || 'Unidad'}
+                              {prod.presentation || 'Unidad'}
                             </span>
-                            {prod.sku && <span className="font-mono">SKU: {prod.sku}</span>}
+                            {prod.code && <span className="font-mono">Cód: {prod.code}</span>}
                           </div>
                         </div>
 
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                          prod.currentStock > 10 ? 'bg-emerald-100 text-emerald-800' :
-                          prod.currentStock > 0 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
+                          prod.stock > 10 ? 'bg-emerald-100 text-emerald-800' :
+                          prod.stock > 0 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
                         }`}>
-                          Stock: {prod.currentStock} un.
+                          Stock: {prod.stock} un.
                         </span>
                       </div>
 
@@ -1389,8 +1543,8 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                     >
                       <option value="efectivo">💵 Efectivo Billete en Mano</option>
                       <option value="transferencia">📲 Transferencia / QR MercadoPago</option>
-                      <option value="cheque">🏷️ Cheque Físico / e-Cheq</option>
-                      <option value="tarjeta">💳 Débito / Tarjeta</option>
+                      <option value="cheque">🏷️ Cheque Físico de Terceros</option>
+                      <option value="echeq">💳 E-Cheq Electrónico</option>
                     </select>
                   </div>
 
@@ -1475,9 +1629,10 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                   </label>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {[
-                      { key: 'visitado', label: '✓ Visitado (Sin pedido)', color: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
-                      { key: 'pedido_tomado', label: '🛒 Pedido Tomado', color: 'bg-purple-50 text-purple-800 border-purple-300' },
-                      { key: 'ausente', label: '✗ Local Cerrado / Ausente', color: 'bg-red-50 text-red-800 border-red-300' },
+                      { key: 'visitado_con_venta', label: '🛒 Venta Realizada', color: 'bg-purple-50 text-purple-800 border-purple-300' },
+                      { key: 'visitado_sin_venta', label: '✓ Visitado (Sin pedido)', color: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
+                      { key: 'visitado_cobranza', label: '💵 Cobro Realizado', color: 'bg-teal-50 text-teal-800 border-teal-300' },
+                      { key: 'no_encontrado_ausente', label: '✗ Local Cerrado / Ausente', color: 'bg-red-50 text-red-800 border-red-300' },
                       { key: 'reprogramado', label: '↻ Visitar Mañana / Reprog', color: 'bg-amber-50 text-amber-800 border-amber-300' },
                     ].map(opt => (
                       <button
@@ -1501,12 +1656,78 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                     Notas de la Visita:
                   </label>
                   <textarea
-                    rows={3}
-                    placeholder="Ej: Hablé con el dueño, vuelven a pedir el próximo martes..."
+                    rows={2}
+                    placeholder="Ej: Hablé con el encargado, vuelven a pedir la próxima semana..."
                     value={visitNotes}
                     onChange={(e) => setVisitNotes(e.target.value)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden"
                   />
+                </div>
+
+                {/* --- Geotagging Satelital GPS en Tiempo Real --- */}
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Compass className={`w-4 h-4 text-blue-600 ${gpsState.status === 'capturing' ? 'animate-spin' : ''}`} />
+                      <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                        Geotagging GPS (Auditoría de Calle)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={requestGpsLocation}
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+                      title="Re-calibrar antena GPS"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${gpsState.status === 'capturing' ? 'animate-spin' : ''}`} />
+                      <span>{gpsState.status === 'capturing' ? 'Capturando...' : 'Re-calibrar'}</span>
+                    </button>
+                  </div>
+
+                  {gpsState.status === 'capturing' && (
+                    <div className="flex items-center gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 animate-pulse">
+                      <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+                      <span>Conectando con antena GPS para registrar coordenadas de validación...</span>
+                    </div>
+                  )}
+
+                  {gpsState.status === 'success' && (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-emerald-800 text-xs font-black">
+                          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>GPS Satelital Verificado</span>
+                        </div>
+                        <span className="text-[10px] bg-emerald-200 text-emerald-900 font-mono px-1.5 py-0.2 rounded font-bold">
+                          Precisión ±{Math.round(gpsState.accuracy)} m
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono text-emerald-800 flex items-center justify-between pt-0.5">
+                        <span>Lat: {gpsState.lat.toFixed(6)} | Lng: {gpsState.lng.toFixed(6)}</span>
+                        <a
+                          href={`https://www.google.com/maps?q=${gpsState.lat},${gpsState.lng}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-emerald-800 underline font-bold flex items-center gap-0.5"
+                        >
+                          <span>Ver mapa</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+                    </div>
+                  )}
+
+                  {(gpsState.status === 'denied' || gpsState.status === 'error') && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl space-y-1">
+                      <div className="flex items-center gap-1.5 text-amber-900 text-xs font-bold">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Señal GPS no disponible</span>
+                      </div>
+                      <p className="text-[11px] text-amber-800 leading-tight">
+                        {gpsState.errorMsg || 'No se pudo obtener la posición satelital.'} Puede guardar la visita de todas formas (quedará registrada como marcación manual).
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-2 flex items-center justify-end gap-2">
@@ -1522,7 +1743,8 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
                     onClick={handleSubmitVisit}
                     className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-black flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
                   >
-                    Guardar Estado
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Guardar Estado & Geotag</span>
                   </button>
                 </div>
               </div>
@@ -1564,12 +1786,12 @@ export const MobileSellerApp: React.FC<MobileSellerAppProps> = ({
               </div>
 
               <p className="text-[11px] text-slate-500">
-                El pedido ya ingresó al sistema de producción y logística para su remito y entrega.
+                El pedido ya ingresó al sistema de fábrica para su preparación, remito y entrega.
               </p>
 
               {/* Share via WhatsApp */}
               <a
-                href={`https://wa.me/?text=${encodeURIComponent(`*COLOREAR PINTURAS - PEDIDO CONFIRMADO*\n\nPedido: ${orderSuccessModal.orderNumber}\nCliente: ${orderSuccessModal.customerName}\nTotal: ${formatMoney(orderSuccessModal.total)}\nFecha prometida: ${orderSuccessModal.promisedDeliveryDate}\n\nTomado por: ${orderSuccessModal.sellerName || 'Preventista'}`)}`}
+                href={`https://wa.me/?text=${encodeURIComponent(`*COLOREAR PINTURAS - PEDIDO CONFIRMADO*\n\nPedido: ${orderSuccessModal.orderNumber}\nCliente: ${orderSuccessModal.customerName}\nTotal: ${formatMoney(orderSuccessModal.total)}\n\nTomado por: ${orderSuccessModal.sellerName || 'Preventista'}`)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs"

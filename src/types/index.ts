@@ -43,8 +43,18 @@ export interface ProductionOrder {
   id: string;
   orderNumber: string; // e.g. OP-2026-001
   formulaId: string;
+  productId?: string;
   productName: string;
-  batchNumber: string;
+  batchNumber: string; // Lote de fabricación (ej: LOT-2026-042)
+  partidaNumber?: string; // Partida de fabricación (ej: PAR-2610-042 o PART-01)
+  manufacturingTank?: string; // Tina / Reactor / Dispersor (ej: Dispersor Cowles #1, Mezclador #2)
+  manufacturingDate?: string; // Fecha de elaboración / fraccionamiento
+  expirationDate?: string; // Fecha de vencimiento
+  viscosityKU?: number; // Viscosidad Krebs (KU)
+  ph?: number; // pH de la mezcla
+  densityReal?: number; // Densidad real medida (kg/L)
+  qcStatus?: 'pendiente' | 'aprobado' | 'rechazado' | 'ajustado';
+  qcInspector?: string; // Responsable de Control de Calidad
   targetKg: number; // Kilograms to manufacture
   packagingType: PackagingType;
   packageCount: number; // Number of buckets/cans calculated or produced
@@ -88,6 +98,8 @@ export interface InventoryMovement {
   quantity: number;
   unit: string;
   reference: string; // e.g. OP-001, PED-102, FAC-0004
+  batchNumber?: string; // Lote
+  partidaNumber?: string; // Partida de fabricación
   user: string;
   date: string;
 }
@@ -126,6 +138,8 @@ export interface SalesOrderItem {
   unitPrice: number;
   discount: number;
   subtotal: number;
+  batchNumber?: string; // Lote asignado
+  partidaNumber?: string; // Partida de fabricación asignada
 }
 
 export type SalesOrderStatus = 
@@ -146,6 +160,8 @@ export interface DeliveryOrderItem {
   code: string;
   presentation: string;
   quantity: number; // Cantidad entregada en esta remesa
+  batchNumber?: string; // Lote entregado
+  partidaNumber?: string; // Partida de fabricación entregada
 }
 
 export interface DeliveryOrder {
@@ -535,6 +551,14 @@ export interface RouteSheetStop {
   salesAmount?: number; // Monto vendido en la parada
   collectedAmount?: number; // Monto cobrado en la parada
   receiptNumber?: string; // Comprobante o cheque recibido
+  // --- Geotagging & Auditoría GPS de Visita para Validación Gerencial ---
+  latitude?: number; // Latitud GPS capturada al marcar la visita
+  longitude?: number; // Longitud GPS capturada al marcar la visita
+  accuracyMeters?: number; // Precisión satelital en metros (ej: 8.5m)
+  geotaggedAt?: string; // Timestamp ISO exacto de captura satelital
+  geotagStatus?: 'verificado_gps' | 'sin_gps_manual' | 'permiso_denegado';
+  geotagAddress?: string; // Referencia de dirección geográfica
+  deviceInfo?: string; // Datos del dispositivo móvil o navegador
 }
 
 export interface RouteSheet {

@@ -447,7 +447,9 @@ export default function App() {
           movementType: 'entrada_produccion',
           quantity: order.packageCount,
           unit: 'unidades',
-          reference: `${order.orderNumber} - Lote ${order.batchNumber}`,
+          reference: `${order.orderNumber} - Lote: ${order.batchNumber} | Partida: ${order.partidaNumber || 'P-01'}`,
+          batchNumber: order.batchNumber,
+          partidaNumber: order.partidaNumber || '',
           user: order.operatorName,
           date: new Date().toISOString()
         });
@@ -556,7 +558,7 @@ export default function App() {
           const pRef = doc(db, 'products', prod.id);
           batch.update(pRef, { stock: newStock });
 
-          // Kardex inventory movement entry
+          // Kardex inventory movement entry with industrial batch and partida traceability
           const movId = `mov-${Date.now()}-${Math.floor(Math.random() * 8999 + 1000)}`;
           const movRef = doc(db, 'inventory_movements', movId);
           batch.set(movRef, {
@@ -567,8 +569,10 @@ export default function App() {
             movementType: 'salida_venta',
             quantity: -delItem.quantity,
             unit: 'unidades',
-            reference: `Orden Entrega ${delivery.deliveryNumber} - Factura ${order.invoiceNumber || 'Anticipada'} - ${order.customerName}`,
+            reference: `Orden Entrega ${delivery.deliveryNumber} - Factura ${order.invoiceNumber || 'Anticipada'} - ${order.customerName}${delItem.batchNumber ? ` [Lote: ${delItem.batchNumber}${delItem.partidaNumber ? ` / Part: ${delItem.partidaNumber}` : ''}]` : ''}`,
             user: delivery.driverName || 'Depósito Fábrica',
+            batchNumber: delItem.batchNumber || undefined,
+            partidaNumber: delItem.partidaNumber || undefined,
             date: new Date().toISOString()
           });
         }
@@ -1192,6 +1196,7 @@ export default function App() {
               salesOrders={salesOrders}
               customers={customers}
               products={products}
+              productionOrders={productionOrders}
               transports={transports}
               config={companyConfig}
               onCreateOrder={async (order) => {
@@ -1238,6 +1243,7 @@ export default function App() {
               onDeleteRouteSheet={async (routeSheetId) => {
                 await deleteDoc(doc(db, 'route_sheets', routeSheetId));
               }}
+              onOpenMobileSellerApp={() => setIsMobileSellerAppOpen(true)}
             />
           )}
 

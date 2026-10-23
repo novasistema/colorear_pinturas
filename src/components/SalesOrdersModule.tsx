@@ -39,7 +39,8 @@ import {
   SalesOrderItem,
   InvoiceType,
   DeliveryOrder,
-  DeliveryOrderItem
+  DeliveryOrderItem,
+  ProductionOrder
 } from '../types';
 import { generateWhatsAppMessage } from '../utils/exportUtils';
 
@@ -47,6 +48,7 @@ interface SalesOrdersModuleProps {
   salesOrders: SalesOrder[];
   customers: Customer[];
   products: Product[];
+  productionOrders?: ProductionOrder[];
   transports: Transport[];
   config: CompanyConfig | null;
   onCreateOrder: (order: SalesOrder) => Promise<void>;
@@ -59,6 +61,7 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
   salesOrders,
   customers,
   products,
+  productionOrders = [],
   transports,
   config,
   onCreateOrder,
@@ -101,6 +104,7 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
   const [receiverDni, setReceiverDni] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [dispatchItems, setDispatchItems] = useState<{ [productId: string]: number }>({});
+  const [dispatchBatches, setDispatchBatches] = useState<{ [productId: string]: { batchNumber: string; partidaNumber: string } }>({});
   const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
 
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId) || customers[0];
@@ -231,14 +235,34 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
     setReceiverDni('');
     setDeliveryNotes('');
 
-    // Pre-populate with remaining pending quantities
+    // Pre-populate with remaining pending quantities and active Lote / Partida from production
     const initialDispatches: { [productId: string]: number } = {};
+    const initialBatches: { [productId: string]: { batchNumber: string; partidaNumber: string } } = {};
+
     order.items.forEach(it => {
       const delivered = it.deliveredQuantity || 0;
       const pending = Math.max(0, it.quantity - delivered);
       initialDispatches[it.productId] = pending; // default to delivering remaining
+
+      // Find matching batch and partida from production orders or inventory
+      const matchingPO = productionOrders.find(po => 
+        (po.productId === it.productId || po.productName.toLowerCase().includes(it.productName.toLowerCase()) || it.productName.toLowerCase().includes(po.productName.toLowerCase())) &&
+        po.status === 'completada'
+      ) || productionOrders.find(po => 
+        po.productId === it.productId || po.productName.toLowerCase().includes(it.productName.toLowerCase())
+      );
+
+      const defaultBatch = matchingPO?.batchNumber || `LOT-${new Date().getFullYear()}-00${Math.floor(Math.random() * 20 + 35)}`;
+      const defaultPartida = matchingPO?.partidaNumber || `PAR-2610-0${Math.floor(Math.random() * 20 + 35)}`;
+
+      initialBatches[it.productId] = {
+        batchNumber: defaultBatch,
+        partidaNumber: defaultPartida
+      };
     });
+
     setDispatchItems(initialDispatches);
+    setDispatchBatches(initialBatches);
   };
 
   // Fill all remaining pending items
@@ -279,7 +303,9 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
           productName: it.productName,
           code: it.code,
           presentation: it.presentation,
-          quantity: qty
+          quantity: qty,
+          batchNumber: dispatchBatches[it.productId]?.batchNumber?.trim() || undefined,
+          partidaNumber: dispatchBatches[it.productId]?.partidaNumber?.trim() || undefined
         });
         totalQty += qty;
       }
@@ -1091,11 +1117,12 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
                     <thead className="bg-slate-100 font-bold text-slate-700 text-[10px] uppercase">
                       <tr>
                         <th className="p-2.5">Pintura / Presentación</th>
+                        <th className="p-2.5">Lote / Partida Despachada</th>
                         <th className="p-2.5 text-center">Facturado</th>
                         <th className="p-2.5 text-center">Ya Entregado</th>
                         <th className="p-2.5 text-center">Pendiente</th>
                         <th className="p-2.5 text-center">Stock Planta</th>
-                        <th className="p-2.5 text-right w-32">A Despachar Hoy</th>
+                        <th className="p-2.5 text-right w-28">A Despachar Hoy</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1111,6 +1138,46 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
                             <td className="p-2.5">
                               <div className="font-bold text-slate-900">{it.productName}</div>
                               <div className="text-[10px] text-slate-400 font-mono">{it.code}</div>
+                            </td>
+                            <td className="p-2.5">
+                              <div className="flex flex-col gap-1 w-36">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase w-10">Lote:</span>
+                                  <input
+                                    type="text"
+                                    placeholder="LOT-2026-..."
+                                    value={dispatchBatches[it.productId]?.batchNumber || ''}
+                                    onChange={e => {
+                                      setDispatchBatches({
+                                        ...dispatchBatches,
+                                        [it.productId]: {
+                                          batchNumber: e.target.value,
+                                          partidaNumber: dispatchBatches[it.productId]?.partidaNumber || ''
+                                        }
+                                      });
+                                    }}
+                                    className="w-full text-[11px] p-1 rounded border border-slate-300 font-mono font-bold text-blue-900 bg-white"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase w-10">Part.:</span>
+                                  <input
+                                    type="text"
+                                    placeholder="PAR-2610-..."
+                                    value={dispatchBatches[it.productId]?.partidaNumber || ''}
+                                    onChange={e => {
+                                      setDispatchBatches({
+                                        ...dispatchBatches,
+                                        [it.productId]: {
+                                          batchNumber: dispatchBatches[it.productId]?.batchNumber || '',
+                                          partidaNumber: e.target.value
+                                        }
+                                      });
+                                    }}
+                                    className="w-full text-[11px] p-1 rounded border border-slate-300 font-mono font-bold text-purple-900 bg-white"
+                                  />
+                                </div>
+                              </div>
                             </td>
                             <td className="p-2.5 text-center font-mono font-semibold text-slate-700">
                               {it.quantity} un
@@ -1260,9 +1327,16 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
                         <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">Mercadería Entregada ({totalInDel} un):</div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 font-mono text-[11px]">
                           {del.items.map((it, idx) => (
-                            <div key={idx} className="bg-white p-1.5 rounded border border-slate-200 flex justify-between">
-                              <span className="text-slate-800 truncate mr-2">{it.productName}</span>
-                              <strong className="text-blue-700 shrink-0">{it.quantity} un</strong>
+                            <div key={idx} className="bg-white p-2 rounded-lg border border-slate-200 flex justify-between items-center">
+                              <div className="min-w-0 pr-2">
+                                <span className="text-slate-800 truncate block font-bold">{it.productName}</span>
+                                {it.batchNumber && (
+                                  <span className="text-[10px] text-blue-700 block">
+                                    Lote: {it.batchNumber} {it.partidaNumber ? `| Part: ${it.partidaNumber}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                              <strong className="text-blue-700 shrink-0 font-mono">{it.quantity} un</strong>
                             </div>
                           ))}
                         </div>
@@ -1571,6 +1645,9 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
                   <thead className="bg-slate-100 font-bold text-slate-700 text-[10px] uppercase">
                     <tr>
                       <th className="p-2.5">Producto</th>
+                      {viewingDoc.type === 'orden_entrega' && (
+                        <th className="p-2.5">Lote / Partida Fab.</th>
+                      )}
                       <th className="p-2.5 text-center">Cant Entregada</th>
                       {viewingDoc.type !== 'orden_entrega' && (
                         <>
@@ -1585,6 +1662,22 @@ export const SalesOrdersModule: React.FC<SalesOrdersModuleProps> = ({
                       viewingDoc.delivery.items.map((it, idx) => (
                         <tr key={idx}>
                           <td className="p-2.5 font-medium">{it.productName} ({it.presentation})</td>
+                          <td className="p-2.5 font-mono text-[11px]">
+                            {it.batchNumber ? (
+                              <div className="flex flex-col">
+                                <span className="font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded inline-block w-fit">
+                                  Lote: {it.batchNumber}
+                                </span>
+                                {it.partidaNumber && (
+                                  <span className="text-purple-800 bg-purple-50 px-1.5 py-0.5 rounded text-[10px] inline-block w-fit mt-0.5">
+                                    Part.: {it.partidaNumber}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic">Lote oficial fábrica</span>
+                            )}
+                          </td>
                           <td className="p-2.5 text-center font-mono font-black text-slate-900">{it.quantity} un</td>
                         </tr>
                       ))

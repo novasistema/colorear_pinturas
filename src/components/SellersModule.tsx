@@ -34,7 +34,9 @@ import {
   Navigation,
   CheckCircle,
   XCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Crosshair,
+  Copy
 } from 'lucide-react';
 import { 
   Seller, 
@@ -104,7 +106,8 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
   onSaveSeller,
   onDeleteSeller,
   onSaveRouteSheet,
-  onDeleteRouteSheet
+  onDeleteRouteSheet,
+  onOpenMobileSellerApp
 }) => {
   const [activeTab, setActiveTab] = useState<'rutas' | 'vendedores' | 'comisiones'>('rutas');
   
@@ -120,6 +123,9 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
   const [editingRouteSheet, setEditingRouteSheet] = useState<RouteSheet | null>(null);
   const [checkInStopModal, setCheckInStopModal] = useState<{ route: RouteSheet; stop: RouteSheetStop } | null>(null);
   const [viewPrintRoute, setViewPrintRoute] = useState<RouteSheet | null>(null);
+  const [auditGpsModalStop, setAuditGpsModalStop] = useState<{ route: RouteSheet; stop: RouteSheetStop } | null>(null);
+  const [auditGpsModalRoute, setAuditGpsModalRoute] = useState<RouteSheet | null>(null);
+  const [copiedCoord, setCopiedCoord] = useState(false);
 
   // New Seller Form state
   const [sellerForm, setSellerForm] = useState<Partial<Seller>>({
@@ -145,6 +151,7 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
   const [checkInSaleAmount, setCheckInSaleAmount] = useState<number>(0);
   const [checkInCollectAmount, setCheckInCollectAmount] = useState<number>(0);
   const [checkInReceiptNumber, setCheckInReceiptNumber] = useState('');
+  const [checkInGps, setCheckInGps] = useState<{ lat?: number; lng?: number; accuracy?: number; status?: string; isLocating?: boolean }>({});
 
   // New Route Form state
   const [newRouteTitle, setNewRouteTitle] = useState('');
@@ -358,6 +365,38 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
     setCheckInSaleAmount(stop.salesAmount || 0);
     setCheckInCollectAmount(stop.collectedAmount || 0);
     setCheckInReceiptNumber(stop.receiptNumber || '');
+    setCheckInGps({
+      lat: stop.latitude,
+      lng: stop.longitude,
+      accuracy: stop.accuracyMeters,
+      status: stop.geotagStatus || (stop.latitude ? 'verificado_gps' : undefined),
+      isLocating: false
+    });
+  };
+
+  // Capture GPS on PC for supervisory check-in
+  const handleCapturePcGps = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocalización no soportada en este navegador.');
+      return;
+    }
+    setCheckInGps(prev => ({ ...prev, isLocating: true }));
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setCheckInGps({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          status: 'verificado_gps',
+          isLocating: false
+        });
+      },
+      err => {
+        alert('No se pudo obtener la ubicación GPS: ' + err.message);
+        setCheckInGps(prev => ({ ...prev, isLocating: false }));
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   // Submit Check-in on a stop
@@ -376,7 +415,13 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
           notes: checkInNotes.trim(),
           salesAmount: Number(checkInSaleAmount) || 0,
           collectedAmount: Number(checkInCollectAmount) || 0,
-          receiptNumber: checkInReceiptNumber.trim() || undefined
+          receiptNumber: checkInReceiptNumber.trim() || undefined,
+          latitude: checkInGps.lat ?? s.latitude,
+          longitude: checkInGps.lng ?? s.longitude,
+          accuracyMeters: checkInGps.accuracy ?? s.accuracyMeters,
+          geotaggedAt: checkInGps.lat ? (s.geotaggedAt || new Date().toISOString()) : s.geotaggedAt,
+          geotagStatus: checkInGps.lat ? 'verificado_gps' : (s.geotagStatus || 'sin_gps_manual'),
+          deviceInfo: s.deviceInfo || 'Gestión Gerencial PC'
         };
       }
       return s;
@@ -569,6 +614,17 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {onOpenMobileSellerApp && (
+            <button
+              onClick={onOpenMobileSellerApp}
+              className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-md transition-transform active:scale-95"
+              title="Abrir la App Móvil simplificada para celulares de vendedores"
+            >
+              <Compass className="w-4 h-4 text-emerald-200" />
+              <span>📱 Ver App Celular Preventista</span>
+            </button>
+          )}
+
           {activeTab === 'rutas' && (
             <button
               onClick={handleOpenCreateRoute}
@@ -716,7 +772,21 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
                       )}
                     </div>
 
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAuditGpsModalRoute(route)}
+                        className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl border shadow-xs transition-colors ${
+                          route.stops.some(s => s.status !== 'pendiente' && s.latitude)
+                            ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
+                        }`}
+                        title="Auditoría Gerencial de Geotagging de la hoja de ruta"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Auditoría GPS ({route.stops.filter(s => s.status !== 'pendiente' && s.latitude).length}/{route.stops.filter(s => s.status !== 'pendiente').length})</span>
+                      </button>
+
                       <button
                         onClick={() => setViewPrintRoute(route)}
                         className="flex items-center gap-1.5 bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold px-3 py-2 rounded-xl border border-slate-300 shadow-xs"
@@ -738,12 +808,13 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
                       {route.stops.map((stop, idx) => {
                         const cleanPhone = stop.customerPhone?.replace(/[^0-9]/g, '') || '';
                         const hasDebt = (stop.currentBalance || 0) > 0;
+                        const isVisited = stop.status !== 'pendiente';
 
                         return (
                           <div 
                             key={stop.id}
                             className={`p-3.5 rounded-xl border transition-all space-y-2 ${
-                              stop.status !== 'pendiente' 
+                              isVisited
                                 ? 'bg-slate-50/70 border-slate-200' 
                                 : 'bg-white border-blue-200/80 shadow-xs'
                             }`}
@@ -777,17 +848,73 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
                               </span>
                             </div>
 
-                            {/* Check-in result if done */}
-                            {stop.checkInTime && (
-                              <div className="p-2 rounded-lg bg-white border border-slate-200 text-xs space-y-1">
+                            {/* Check-in result and Geotagging verification if visited */}
+                            {isVisited && (
+                              <div className="p-2.5 rounded-xl bg-white border border-slate-200 text-xs space-y-2 shadow-2xs">
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
-                                  <span>Hora check-in: <strong>{stop.checkInTime} hs</strong></span>
+                                  <span>Hora check-in: <strong className="text-slate-800">{stop.checkInTime || 'Registrado'} hs</strong></span>
                                   {stop.salesAmount ? <span className="text-emerald-700 font-bold font-mono">Venta: $ {stop.salesAmount.toLocaleString('es-AR')}</span> : null}
                                   {stop.collectedAmount ? <span className="text-teal-700 font-bold font-mono">Cobro: $ {stop.collectedAmount.toLocaleString('es-AR')}</span> : null}
                                 </div>
                                 {stop.notes && (
-                                  <div className="text-slate-700 text-[11px] italic">
+                                  <div className="text-slate-700 text-[11px] italic bg-slate-50 p-1.5 rounded-lg">
                                     "{stop.notes}"
+                                  </div>
+                                )}
+
+                                {/* Geotagging GPS details for manager */}
+                                {stop.latitude && stop.longitude ? (
+                                  <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-emerald-50/80 p-2 rounded-lg border border-emerald-200">
+                                    <div className="flex items-center gap-1.5">
+                                      <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                                      <div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[11px] font-black text-emerald-950">GPS Verificado en Destino</span>
+                                          <span className="text-[9px] bg-emerald-200 text-emerald-900 font-mono px-1 py-0.2 rounded font-bold">
+                                            ±{stop.accuracyMeters ? Math.round(stop.accuracyMeters) : 10}m
+                                          </span>
+                                        </div>
+                                        <div className="text-[10px] font-mono text-emerald-700">
+                                          {stop.latitude.toFixed(6)}, {stop.longitude.toFixed(6)}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <a
+                                        href={`https://www.google.com/maps?q=${stop.latitude},${stop.longitude}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-white hover:bg-emerald-100 px-2 py-1 rounded-md border border-emerald-300 transition-colors"
+                                        title="Ver en Google Maps externo"
+                                      >
+                                        <ExternalLink className="w-3 h-3 text-emerald-600" />
+                                        <span>Maps</span>
+                                      </a>
+                                      <button
+                                        type="button"
+                                        onClick={() => setAuditGpsModalStop({ route, stop })}
+                                        className="inline-flex items-center gap-1 text-[11px] font-black text-white bg-emerald-700 hover:bg-emerald-800 px-2.5 py-1 rounded-md shadow-2xs transition-colors"
+                                        title="Auditar Geotagging en PC con mapa satelital"
+                                      >
+                                        <MapPin className="w-3 h-3" />
+                                        <span>Auditar en PC</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-amber-800 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
+                                    <span className="flex items-center gap-1">
+                                      <AlertCircle className="w-3 h-3 text-amber-600 shrink-0" />
+                                      Visita registrada sin Geotagging GPS (Marcación Manual)
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenCheckIn(route, stop)}
+                                      className="text-amber-900 font-bold underline hover:text-amber-950"
+                                    >
+                                      Geolocalizar
+                                    </button>
                                   </div>
                                 )}
                               </div>
@@ -1625,6 +1752,52 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
                 />
               </div>
 
+              {/* Geotagging GPS Widget */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                    <Navigation className="w-3.5 h-3.5 text-blue-600" />
+                    Georreferenciación GPS de la Visita
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCapturePcGps}
+                    disabled={checkInGps.isLocating}
+                    className="text-[10px] font-bold px-2 py-1 bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 flex items-center gap-1 shadow-2xs"
+                  >
+                    <Crosshair className={`w-3 h-3 text-blue-600 ${checkInGps.isLocating ? 'animate-spin' : ''}`} />
+                    {checkInGps.isLocating ? 'Detectando...' : checkInGps.lat ? 'Recalibrar GPS' : 'Capturar GPS PC'}
+                  </button>
+                </div>
+                {checkInGps.lat && checkInGps.lng ? (
+                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-2 text-emerald-800 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <div>
+                        <div className="font-mono font-bold">
+                          {checkInGps.lat.toFixed(6)}, {checkInGps.lng.toFixed(6)}
+                        </div>
+                        <div className="text-[10px] text-emerald-600">
+                          {checkInGps.accuracy ? `Precisión de antena ±${Math.round(checkInGps.accuracy)}m` : 'Coordenadas verificadas'}
+                        </div>
+                      </div>
+                    </div>
+                    <a
+                      href={`https://www.google.com/maps?q=${checkInGps.lat},${checkInGps.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-0.5"
+                    >
+                      Ver mapa <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500">
+                    Sin coordenadas registradas aún. Al realizar la visita desde el móvil del preventista, las coordenadas se capturan de forma satelital instantánea al marcar 'Visitado'.
+                  </p>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -1732,6 +1905,430 @@ export const SellersModule: React.FC<SellersModuleProps> = ({
                 className="bg-slate-900 hover:bg-black text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5"
               >
                 <Printer className="w-4 h-4" /> Imprimir Hoja de Ruta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: INDIVIDUAL VISIT GPS AUDIT */}
+      {auditGpsModalStop && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-200">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  auditGpsModalStop.stop.latitude ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                }`}>
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-base text-slate-900">
+                      Auditoría Gerencial de Geotagging
+                    </h3>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                      auditGpsModalStop.stop.latitude
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'bg-amber-100 text-amber-800 border border-amber-300'
+                    }`}>
+                      {auditGpsModalStop.stop.latitude ? 'GPS Verificado' : 'Sin GPS Satelital'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Hoja <span className="font-mono font-bold text-slate-700">{auditGpsModalStop.route.code}</span> • Preventista: <strong className="text-slate-800">{auditGpsModalStop.route.sellerName}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAuditGpsModalStop(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="mt-4 space-y-4">
+              {/* Customer and Visit Metadata Card */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Cliente & Destino</span>
+                  <strong className="text-sm text-slate-900 block mt-0.5">{auditGpsModalStop.stop.customerName}</strong>
+                  <div className="text-slate-600 flex items-center gap-1 mt-1 text-[11px]">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{auditGpsModalStop.stop.customerAddress}</span>
+                  </div>
+                  {auditGpsModalStop.stop.customerPhone && (
+                    <div className="text-slate-500 font-mono text-[11px] mt-0.5">
+                      Tel: {auditGpsModalStop.stop.customerPhone}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t md:border-t-0 md:border-l md:pl-3 border-slate-200 pt-2 md:pt-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Resultado Comercial</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800">
+                      {auditGpsModalStop.stop.status.replace(/_/g, ' ').toUpperCase()}
+                    </span>
+                    {auditGpsModalStop.stop.checkInTime && (
+                      <span className="text-xs font-mono text-slate-600 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        {auditGpsModalStop.stop.checkInTime}
+                      </span>
+                    )}
+                  </div>
+                  {((auditGpsModalStop.stop.salesAmount || 0) > 0 || (auditGpsModalStop.stop.collectedAmount || 0) > 0) && (
+                    <div className="mt-2 space-y-0.5 font-mono text-[11px]">
+                      {(auditGpsModalStop.stop.salesAmount || 0) > 0 && (
+                        <div className="text-emerald-700 font-bold">
+                          Venta registrada: $ {auditGpsModalStop.stop.salesAmount?.toLocaleString('es-AR')}
+                        </div>
+                      )}
+                      {(auditGpsModalStop.stop.collectedAmount || 0) > 0 && (
+                        <div className="text-blue-700 font-bold">
+                          Cobranza realizada: $ {auditGpsModalStop.stop.collectedAmount?.toLocaleString('es-AR')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {auditGpsModalStop.stop.notes && (
+                    <div className="mt-2 text-[11px] text-slate-600 italic bg-white p-2 rounded-lg border border-slate-200">
+                      "{auditGpsModalStop.stop.notes}"
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* GPS Satellite Evidence */}
+              {auditGpsModalStop.stop.latitude && auditGpsModalStop.stop.longitude ? (
+                <div className="space-y-3">
+                  {/* Verification Banner */}
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                        <div>
+                          <div className="text-xs font-bold text-emerald-900">
+                            Geolocalización Satelital Certificada en Punto de Venta
+                          </div>
+                          <div className="text-[11px] text-emerald-700 font-mono">
+                            Lat: {auditGpsModalStop.stop.latitude.toFixed(6)} | Lng: {auditGpsModalStop.stop.longitude.toFixed(6)}
+                            {auditGpsModalStop.stop.accuracyMeters && (
+                              <span className="ml-2 font-sans font-semibold bg-emerald-200/70 text-emerald-900 px-1.5 py-0.2 rounded">
+                                Margen de antena: ±{Math.round(auditGpsModalStop.stop.accuracyMeters)}m
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const coordText = `${auditGpsModalStop.stop.latitude}, ${auditGpsModalStop.stop.longitude}`;
+                            navigator.clipboard.writeText(coordText);
+                            setCopiedCoord(true);
+                            setTimeout(() => setCopiedCoord(false), 2000);
+                          }}
+                          className="text-[10px] font-bold px-2.5 py-1 bg-white border border-emerald-300 rounded-lg text-emerald-800 hover:bg-emerald-100 flex items-center gap-1 shadow-2xs"
+                        >
+                          <Copy className="w-3 h-3" />
+                          {copiedCoord ? '¡Copiado!' : 'Copiar GPS'}
+                        </button>
+                        <a
+                          href={`https://www.google.com/maps?q=${auditGpsModalStop.stop.latitude},${auditGpsModalStop.stop.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] font-bold px-2.5 py-1 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-1 shadow-xs"
+                        >
+                          Google Maps <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* Meta timestamps */}
+                    <div className="mt-2 pt-2 border-t border-emerald-200/60 flex flex-wrap items-center justify-between text-[10px] text-emerald-800">
+                      <span>
+                        Momento del Geotag: <strong>{auditGpsModalStop.stop.geotaggedAt ? new Date(auditGpsModalStop.stop.geotaggedAt).toLocaleString('es-AR') : (auditGpsModalStop.stop.checkInTime || 'Registrado en visita')}</strong>
+                      </span>
+                      <span>
+                        Dispositivo: <strong>{auditGpsModalStop.stop.deviceInfo || 'App Preventa Móvil (GPS Satelital)'}</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* OpenStreetMap Interactive Embed */}
+                  <div className="relative rounded-xl overflow-hidden border border-slate-300 shadow-inner bg-slate-100">
+                    <iframe
+                      title={`Mapa Satelital ${auditGpsModalStop.stop.customerName}`}
+                      width="100%"
+                      height="260"
+                      className="border-0 w-full"
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${auditGpsModalStop.stop.longitude - 0.006},${auditGpsModalStop.stop.latitude - 0.005},${auditGpsModalStop.stop.longitude + 0.006},${auditGpsModalStop.stop.latitude + 0.005}&layer=mapnik&marker=${auditGpsModalStop.stop.latitude},${auditGpsModalStop.stop.longitude}`}
+                    />
+                    <div className="absolute top-2 left-2 bg-white/90 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-800 shadow-xs flex items-center gap-1">
+                      <Crosshair className="w-3 h-3 text-emerald-600" />
+                      Marcador de Check-in Presencial
+                    </div>
+                    <div className="absolute bottom-2 right-2 bg-white/95 backdrop-blur-xs px-2.5 py-1 rounded-lg border border-slate-200 text-[10px] font-mono font-bold text-slate-700 shadow-xs">
+                      {auditGpsModalStop.stop.latitude.toFixed(6)}, {auditGpsModalStop.stop.longitude.toFixed(6)}
+                    </div>
+                  </div>
+
+                  {/* Comparative Validation Callout */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Validación Cruzada de Coordenadas
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <span className="text-[10px] text-slate-400 block font-semibold">📍 Domicilio Comercial de Ficha</span>
+                        <span className="text-slate-800 font-medium text-[11px]">{auditGpsModalStop.stop.customerAddress}</span>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <span className="text-[10px] text-slate-400 block font-semibold">🛰️ Posición Satelital del Vendedor</span>
+                        <span className="text-emerald-700 font-mono font-bold text-[11px]">
+                          {auditGpsModalStop.stop.latitude.toFixed(6)}, {auditGpsModalStop.stop.longitude.toFixed(6)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <h4 className="font-bold text-xs">Visita sin Geotagging Satelital Registrado</h4>
+                  </div>
+                  <p className="text-xs text-amber-800">
+                    Esta parada fue asentada de forma manual en el sistema o el dispositivo móvil no tenía activado el permiso de GPS al momento de marcar el estado 'Visitado'.
+                  </p>
+                  <div className="pt-2 flex items-center gap-2">
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(auditGpsModalStop.stop.customerAddress)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg inline-flex items-center gap-1 shadow-2xs"
+                    >
+                      <MapPin className="w-3.5 h-3.5" /> Buscar dirección en Google Maps
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="mt-5 pt-3 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                Auditoría Gerencial Colorear Pinturas • Trazabilidad en Calle
+              </span>
+              <button
+                type="button"
+                onClick={() => setAuditGpsModalStop(null)}
+                className="bg-slate-900 hover:bg-black text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs"
+              >
+                Cerrar Auditoría
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ROUTE-LEVEL GPS AUDIT */}
+      {auditGpsModalRoute && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-200">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <Navigation className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-base text-slate-900">
+                      Panel Gerencial de Auditoría GPS de Hoja de Ruta
+                    </h3>
+                    <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-300">
+                      {auditGpsModalRoute.code}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Vendedor: <strong className="text-slate-800">{auditGpsModalRoute.sellerName}</strong> • Fecha: <strong className="text-slate-800">{new Date(auditGpsModalRoute.date).toLocaleDateString('es-AR')}</strong> • Zona: {auditGpsModalRoute.zone}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAuditGpsModalRoute(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* KPI Summary Cards */}
+            {(() => {
+              const total = auditGpsModalRoute.stops.length;
+              const visited = auditGpsModalRoute.stops.filter(s => s.status !== 'pendiente').length;
+              const withGps = auditGpsModalRoute.stops.filter(s => s.latitude && s.longitude).length;
+              const withoutGps = visited - withGps;
+              const gpsCoveragePct = visited > 0 ? Math.round((withGps / visited) * 100) : 0;
+
+              return (
+                <div className="mt-4 space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Paradas</span>
+                      <strong className="text-xl text-slate-900 font-mono">{total}</strong>
+                      <span className="text-[10px] text-slate-500 block">En hoja de ruta</span>
+                    </div>
+
+                    <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                      <span className="text-[10px] font-bold text-emerald-700 uppercase block flex items-center gap-1">
+                        <ShieldCheck className="w-3.5 h-3.5" /> GPS Verificado
+                      </span>
+                      <strong className="text-xl text-emerald-900 font-mono">{withGps}</strong>
+                      <span className="text-[10px] text-emerald-700 font-bold block">
+                        {gpsCoveragePct}% de las visitas
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
+                      <span className="text-[10px] font-bold text-amber-700 uppercase block">Sin GPS / Manual</span>
+                      <strong className="text-xl text-amber-900 font-mono">{withoutGps}</strong>
+                      <span className="text-[10px] text-amber-600 block">Revisar con preventista</span>
+                    </div>
+
+                    <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
+                      <span className="text-[10px] font-bold text-blue-700 uppercase block">Pendientes</span>
+                      <strong className="text-xl text-blue-900 font-mono">{total - visited}</strong>
+                      <span className="text-[10px] text-blue-600 block">En tránsito</span>
+                    </div>
+                  </div>
+
+                  {/* Stops Compliance Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Detalle de Paradas y Validación Satelital
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        {withGps} de {total} paradas con coordenadas registradas
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-100 font-bold text-slate-600 text-[10px] uppercase border-b border-slate-200">
+                          <tr>
+                            <th className="p-2.5 text-center w-10">#</th>
+                            <th className="p-2.5">Cliente & Dirección</th>
+                            <th className="p-2.5">Estado Visita</th>
+                            <th className="p-2.5">Hora</th>
+                            <th className="p-2.5">Geotagging</th>
+                            <th className="p-2.5 font-mono">Coordenadas</th>
+                            <th className="p-2.5 text-right">Auditoría</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {auditGpsModalRoute.stops.map(s => {
+                            const isPending = s.status === 'pendiente';
+                            const hasGps = !!(s.latitude && s.longitude);
+
+                            return (
+                              <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="p-2.5 text-center font-bold text-slate-500">
+                                  {s.orderIndex}
+                                </td>
+                                <td className="p-2.5">
+                                  <div className="font-bold text-slate-900">{s.customerName}</div>
+                                  <div className="text-[11px] text-slate-500">{s.customerAddress}</div>
+                                </td>
+                                <td className="p-2.5">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                    isPending
+                                      ? 'bg-slate-100 text-slate-600'
+                                      : s.status === 'visitado_con_venta'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : s.status === 'visitado_cobranza'
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : 'bg-amber-100 text-amber-800'
+                                  }`}>
+                                    {isPending ? 'Pendiente' : s.status.replace(/_/g, ' ')}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 font-mono text-[11px] text-slate-600">
+                                  {s.checkInTime || '-'}
+                                </td>
+                                <td className="p-2.5">
+                                  {hasGps ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                      GPS OK {s.accuracyMeters ? `(±${Math.round(s.accuracyMeters)}m)` : ''}
+                                    </span>
+                                  ) : isPending ? (
+                                    <span className="text-[11px] text-slate-400">
+                                      Por visitar
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                                      <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                                      Manual / Sin GPS
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2.5 font-mono text-[10px] text-slate-600">
+                                  {hasGps ? `${s.latitude!.toFixed(4)}, ${s.longitude!.toFixed(4)}` : '-'}
+                                </td>
+                                <td className="p-2.5 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setAuditGpsModalStop({ route: auditGpsModalRoute, stop: s })}
+                                      className="text-[10px] font-bold px-2 py-1 bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 hover:border-slate-400 shadow-2xs flex items-center gap-1"
+                                    >
+                                      <Eye className="w-3 h-3 text-blue-600" />
+                                      Auditar
+                                    </button>
+                                    {hasGps && (
+                                      <a
+                                        href={`https://www.google.com/maps?q=${s.latitude},${s.longitude}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="p-1 rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-500 hover:text-blue-600 shadow-2xs"
+                                        title="Abrir en Google Maps"
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Modal Footer */}
+            <div className="mt-5 pt-3 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                Sistema de Control y Georreferenciación de Preventa • Fábrica Colorear
+              </span>
+              <button
+                type="button"
+                onClick={() => setAuditGpsModalRoute(null)}
+                className="bg-slate-900 hover:bg-black text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs"
+              >
+                Cerrar Panel
               </button>
             </div>
           </div>
